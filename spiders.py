@@ -2,9 +2,11 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import urllib3
+# 修正重點：改從 urllib3.exceptions 匯入錯誤類型
+from urllib3.exceptions import InsecureRequestWarning
 
 # 關閉 SSL 驗證警告
-urllib3.disable_warnings(urllib3.errors.InsecureRequestWarning)
+urllib3.disable_warnings(InsecureRequestWarning)
 
 class ScheduleSpider:
     def __init__(self):
@@ -24,7 +26,6 @@ class ScheduleSpider:
             target_name = "行政副院長"
 
         try:
-            # 關鍵修改：加入 verify=False 繞過 SSL 憑證問題
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})，可能遭 IP 封鎖", "時間/地點": "-"}]
@@ -32,7 +33,6 @@ class ScheduleSpider:
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
-            # 針對行政院常見的兩種網頁結構進行解析
             items = soup.select('.table tr') or soup.select('tr')
             
             for item in items:
@@ -58,7 +58,7 @@ class ScheduleSpider:
             return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
 
     def get_president_schedule(self):
-        """抓取總統府行程（通常隱含在焦點新聞內）"""
+        """抓取總統府行程"""
         url = "https://www.president.gov.tw/Page/94"
         target_name = "總統"
         try:
@@ -69,7 +69,6 @@ class ScheduleSpider:
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
-            # 總統府新聞列表結構
             items = soup.select('.news_list li') or soup.select('tr')
             for item in items:
                 text = item.get_text(separator=" ").strip()
@@ -88,7 +87,7 @@ class ScheduleSpider:
 
     def get_moea_schedule(self):
         """抓取經濟部長行程"""
-        url = "https://www.moea.gov.tw/Mns/populace/news/News.aspx?kind=4" # 採訪通知
+        url = "https://www.moea.gov.tw/Mns/populace/news/News.aspx?kind=4"
         target_name = "經濟部長"
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
@@ -98,7 +97,6 @@ class ScheduleSpider:
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
-            # 經濟部採訪通知列表結構
             items = soup.select('.news_title') or soup.select('tr')
             for item in items:
                 text = item.get_text(separator=" ").strip()
