@@ -1,4 +1,4 @@
-import streamlit as tf
+import streamlit as st
 import pandas as pd
 from spiders import ScheduleSpider
 
