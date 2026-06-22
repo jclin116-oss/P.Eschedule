@@ -25,7 +25,7 @@ date_variants = [
     f"{selected_date.month}月{selected_date.day}日" # 6月22日
 ]
 
-st.caption(f"目前檢索日期：【{date_str}】。點擊行程內容文字可直接跳轉至原始公告內文頁面。")
+st.caption(f"目前檢索日期：【{date_str}】。可透過詳細內文欄位直接點擊跳轉至原始網頁。")
 
 spider = ScheduleSpider()
 
@@ -50,24 +50,27 @@ if st.button("🔄 立即更新並篩選行程資料", type="primary"):
             # 檢查時間戳記
             df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
             
-            # 欄位順序 (保留網址欄位供 LinkColumn 讀取)
-            df = df[['官職', '行程內容', '時間/地點', '檢查時間', '網址']]
+            # 調整欄位排序：將網址獨立整合為「詳細內文」按鈕欄位
+            df = df[['官職', '行程內容', '時間/地點', '網址', '檢查時間']]
             
             st.success(f"{date_str} 資料篩選與官階排序完成！")
             st.subheader(f"📅 {date_str} 行程列表")
             
-            # --- 修正版：使用標準 st.dataframe 並移除不穩定的 display_text 參數 ---
+            # --- 安全穩定的超連結表格渲染方案 ---
             st.dataframe(
                 df,
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "行程內容": st.column_config.LinkColumn(
-                        "行程內容 (可點擊跳轉)",
-                        help="點擊文字可直接開啟對應政府公開頁面",
-                        url_column="網址"  # 指定超連結指向網址欄位
+                    "官職": st.column_config.TextColumn("官職"),
+                    "行程內容": st.column_config.TextColumn("行程內容"),
+                    "時間/地點": st.column_config.TextColumn("時間/地點"),
+                    "網址": st.column_config.LinkColumn(
+                        "詳細內文",
+                        help="點擊即可開啟原始公告網頁查看詳細說明",
+                        display_text="🔗 前往內文"  # 隱藏複雜網址，統一格式化為文字按鈕
                     ),
-                    "網址": None  # 隱藏獨立的純網址欄位
+                    "檢查時間": st.column_config.TextColumn("檢查時間")
                 }
             )
             
