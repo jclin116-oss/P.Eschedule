@@ -26,16 +26,30 @@ def get_rss(url):
         return pd.DataFrame()
 
 def get_president():
+    url = "https://www.president.gov.tw/Page/37"
     try:
-        url = "https://www.president.gov.tw/Page/37"
+        # 1. 進行請求
         response = requests.get(url, timeout=10, verify=False)
+        
+        # 2. 【關鍵修正】強制指定編碼為 utf-8，避免亂碼
+        response.encoding = 'utf-8'
+        
+        # 3. 解析內容
         soup = BeautifulSoup(response.text, 'html.parser')
-        items = soup.select(".timeIB")
-        data = [{"行程": item.text} for item in items]
-        return pd.DataFrame(data)
+        
+        schedule_data = []
+        for unit in soup.select(".unitList"):
+            title = unit.select_one(".unitTitle").get_text(strip=True) if unit.select_one(".unitTitle") else "總統/副總統"
+            # 抓取行程內容
+            for item in unit.select(".timeIB"):
+                schedule_data.append({
+                    "人物": title,
+                    "行程": item.get_text(strip=True),
+                    "日期": datetime.now().date()
+                })
+        return pd.DataFrame(schedule_data), None
     except Exception as e:
-        st.error(f"總統府爬蟲錯誤: {e}")
-        return pd.DataFrame()
+        return None, str(e)
 
 # 執行爬蟲
 with st.spinner("載入中..."):
