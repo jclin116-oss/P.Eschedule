@@ -7,26 +7,31 @@ st.set_page_config(page_title="政府首長公開行程監測", layout="wide")
 
 st.title("🏛️ 政府首長公開行程即時看板")
 
-# --- 新增功能：日期選擇器 ---
+# --- 日期選擇器 ---
 today = datetime.now().date()
 selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
 date_str = selected_date.strftime("%Y-%m-%d")
-# 中文格式用於部分網頁關鍵字比對 (例如 115/06/22 或 115年6月22日)
-roc_year = selected_date.year - 1911
-date_zh_variant1 = f"{roc_year}年{selected_date.month}月{selected_date.day}日"
-date_zh_variant2 = f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}"
 
-st.caption(f"本系統將檢索官網近期行程，並自動過濾出符合 【{date_str}】 或 【{date_zh_variant1}】 的資料。")
+# 建立多種可能的日期文字格式組合，包裝成一個清單 (List)
+roc_year = selected_date.year - 1911
+date_variants = [
+    date_str,                                      # 2026-06-22
+    selected_date.strftime("%Y/%m/%d"),           # 2026/06/22
+    f"{roc_year}年{selected_date.month}月{selected_date.day}日", # 115年6月22日
+    f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}" # 115/06/22
+]
+
+st.caption(f"本系統將檢索官網近期行程，並自動過濾出符合 【{date_str}】 相關格式的資料。")
 
 spider = ScheduleSpider()
 
 if st.button("🔄 立即更新並篩選行程資料", type="primary"):
     with st.spinner(f"正在檢索並篩選 {date_str} 的行程，請稍候..."):
         
-        # 執行爬蟲，將日期變體傳入過濾
-        ey_data = spider.get_ey_schedule(date_str, date_zh_variant1, date_zh_variant2)
-        president_data = spider.get_president_schedule(date_str, date_zh_variant1, date_zh_variant2)
-        moea_data = spider.get_moea_schedule(date_str, date_zh_variant1, date_zh_variant2)
+        # 修正：直接將清單物件傳入各個函式
+        ey_data = spider.get_ey_schedule(date_variants)
+        president_data = spider.get_president_schedule(date_variants)
+        moea_data = spider.get_moea_schedule(date_variants)
         
         all_data = president_data + ey_data + moea_data
         
