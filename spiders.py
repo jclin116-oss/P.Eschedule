@@ -19,7 +19,7 @@ class ScheduleSpider:
         return any(v in text for v in date_variants)
 
     def _fetch_ey_rss(self, pid, target_name, clean_date):
-        """內部工具：根據指定的 PID 抓取行政院特定首長的 RSS"""
+        """內部工具：抓取行政院特定首長 RSS"""
         url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID={pid}&SD={clean_date}&ED={clean_date}"
         schedules = []
         try:
@@ -53,17 +53,12 @@ class ScheduleSpider:
         return schedules
 
     def get_ey_schedule(self, date_str):
-        """抓取行政院行程：分別抓取院長與副院長 RSS 頻道"""
+        """抓取行政院行程（院長與副院長 RSS 頻道）"""
         clean_date = date_str.replace("-", "")
-        
-        # 院長 PID: c98e07e2-66b4-4c90-a68d-2ef8ef8cf550
         premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date)
-        
-        # 副院長 PID: 018a38fc-8461-4687-9bc1-35606d50db8a
         vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date)
         
         schedules = premier_schedules + vice_premier_schedules
-        
         if not schedules:
             return [
                 {"官職": "行政院長", "行程內容": "該日期無公開行程", "時間/地點": "-"},
@@ -72,7 +67,7 @@ class ScheduleSpider:
         return schedules
 
     def get_president_schedule(self, date_variants):
-        """抓取總統府行程並過濾日期"""
+        """抓取總統府行程（網頁 HTML 解析）"""
         url = "https://www.president.gov.tw/Page/37"
         target_name = "總統"
         try:
@@ -89,13 +84,7 @@ class ScheduleSpider:
                 text = " ".join(item.get_text(separator=" ").split())
                 if text and len(text) > 10 and "頁面" not in text and "版權所有" not in text:
                     if self._match_date(text, date_variants):
-                        # 總統府頁面通常包含總統與副總統，在此做初步文本切分
-                        display_name = "總統"
-                        if "副總統" in text:
-                            display_name = "副總統"
-                        elif "總統" in text:
-                            display_name = "總統"
-                            
+                        display_name = "副總統" if "副總統" in text else "總統"
                         schedules.append({
                             "官職": display_name,
                             "行程內容": text,
@@ -109,46 +98,44 @@ class ScheduleSpider:
             return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
 
     def get_moea_schedule(self, date_variants):
-        """抓取經濟部長行程並過濾日期"""
-        url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
+        """改用 RSS 抓取經濟部長行程"""
+        url = "https://www.moea.gov.tw/Mns/populace/news/NewsRSSDetail.aspx?Kind=10"
         target_name = "經濟部長"
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
+                return [{"官職": target_name, "行程內容": f"RSS站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
                 
             res.encoding = 'utf-8'
-            soup = BeautifulSoup(res.text, 'html.parser')
+            try:
+                soup = BeautifulSoup(res.text, 'xml')
+                items = soup.find_all('item')
+            except Exception:
+                soup = BeautifulSoup(res.text, 'html.parser')
+                items = soup.find_all('item')
+                
             schedules = []
-            
-            items = soup.select('tr') or soup.select('table tr')
             for item in items:
-                tds = item.select('td')
-                if len(tds) >= 2:
-                    time_info = " ".join(tds[0].get_text(separator=" ").split())
-                    content_info = " ".join(tds[1].get_text(separator=" ").split())
-                    
-                    full_text = f"{time_info} {content_info}"
-                    if "暫無行程" in content_info or "無公開行程" in content_info:
+                title_node = item.find('title')
+                desc_node = item.find('description')
+                
+                title = title_node.get_text().strip() if title_node else ""
+                description = desc_node.get_text().strip() if desc_node else ""
+                
+                full_text = f"{title} {description}"
+                
+                # 比對日期變體
+                if self._match_date(full_text, date_variants):
+                    if "暫無行程" in description or "無公開行程" in description:
                         continue
-                        
-                    if self._match_date(full_text, date_variants):
-                        schedules.append({
-                            "官職": target_name,
-                            "行程內容": content_info,
-                            "時間/地點": time_info
-                        })
-                else:
-                    text = " ".join(item.get_text(separator=" ").split())
-                    if text and len(text) > 15 and self._match_date(text, date_variants):
-                        schedules.append({
-                            "官職": target_name,
-                            "行程內容": text,
-                            "時間/地點": "見內文"
-                        })
+                    schedules.append({
+                        "官職": target_name,
+                        "行程內容": description if description else title,
+                        "時間/地點": title  # 標題通常包含日期與行程通知字樣
+                    })
             
             if not schedules:
-                return [{"官職": target_name, "行程內容": "該日期於官網頁面無公開行程顯示", "時間/地點": "-"}]
+                return [{"官職": target_name, "行程內容": "該日期於經濟部 RSS 中無公開行程", "時間/地點": "-"}]
             return schedules
         except Exception as e:
-            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
+            return [{"官職": target_name, "行程內容": f"RSS連線異常: {str(e)}", "時間/地點": "-"}]
