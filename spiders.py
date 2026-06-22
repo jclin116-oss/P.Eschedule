@@ -18,34 +18,23 @@ class ScheduleSpider:
         """檢查文本內是否包含任何一種日期變體"""
         return any(v in text for v in date_variants)
 
-    def get_ey_schedule(self, date_str):
-        """
-        抓取行政院行程：直接帶入參數型 RSS 網址
-        date_str 格式固定為 'YYYY-MM-DD' (來自 app.py)
-        """
-        # 將 '2026-06-22' 轉換為行政院需要的 '20260622' 格式
-        clean_date = date_str.replace("-", "")
-        
-        # 動態拼接網址，讓行政院直接吐回該日期的精準 RSS
-        url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID=c98e07e2-66b4-4c90-a68d-2ef8ef8cf550&SD={clean_date}&ED={clean_date}"
-        
+    def _fetch_ey_rss(self, pid, target_name, clean_date):
+        """內部工具：根據指定的 PID 抓取行政院特定首長的 RSS"""
+        url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID={pid}&SD={clean_date}&ED={clean_date}"
+        schedules = []
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return [{"官職": "行政院", "行程內容": f"RSS 回應異常 (HTTP {res.status_code})", "時間/地點": "-"}]
+                return []
             
             res.encoding = 'utf-8'
-            
-            # 容錯解析 XML
             try:
                 soup = BeautifulSoup(res.text, 'xml')
                 items = soup.find_all('item')
             except Exception:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 items = soup.find_all('item')
-            
-            schedules = []
-            
+                
             for item in items:
                 title_node = item.find('title')
                 desc_node = item.find('description')
@@ -54,21 +43,33 @@ class ScheduleSpider:
                 description = desc_node.get_text().strip() if desc_node else ""
                 
                 if title:
-                    # 判斷院長或副院長
-                    target = "行政院長" if "院長" in title and "副院長" not in title else ("行政副院長" if "副院長" in title else "行政院行程")
-                    
                     schedules.append({
-                        "官職": target,
+                        "官職": target_name,
                         "行程內容": title,
                         "時間/地點": description if description else "詳見內文"
                     })
-            
-            if not schedules:
-                return [{"官職": "行政院行程", "行程內容": "該日期於行政院 RSS 中無公開行程", "時間/地點": "-"}]
-            return schedules
-            
-        except Exception as e:
-            return [{"官職": "行政院", "行程內容": f"RSS 連線異常: {str(e)}", "時間/地點": "-"}]
+        except Exception:
+            pass
+        return schedules
+
+    def get_ey_schedule(self, date_str):
+        """抓取行政院行程：分別抓取院長與副院長 RSS 頻道"""
+        clean_date = date_str.replace("-", "")
+        
+        # 院長 PID: c98e07e2-66b4-4c90-a68d-2ef8ef8cf550
+        premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date)
+        
+        # 副院長 PID: 018a38fc-8461-4687-9bc1-35606d50db8a
+        vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date)
+        
+        schedules = premier_schedules + vice_premier_schedules
+        
+        if not schedules:
+            return [
+                {"官職": "行政院長", "行程內容": "該日期無公開行程", "時間/地點": "-"},
+                {"官職": "行政副院長", "行程內容": "該日期無公開行程", "時間/地點": "-"}
+            ]
+        return schedules
 
     def get_president_schedule(self, date_variants):
         """抓取總統府行程並過濾日期"""
@@ -88,8 +89,15 @@ class ScheduleSpider:
                 text = " ".join(item.get_text(separator=" ").split())
                 if text and len(text) > 10 and "頁面" not in text and "版權所有" not in text:
                     if self._match_date(text, date_variants):
+                        # 總統府頁面通常包含總統與副總統，在此做初步文本切分
+                        display_name = "總統"
+                        if "副總統" in text:
+                            display_name = "副總統"
+                        elif "總統" in text:
+                            display_name = "總統"
+                            
                         schedules.append({
-                            "官職": target_name,
+                            "官職": display_name,
                             "行程內容": text,
                             "時間/地點": "詳見官網行程頁"
                         })
