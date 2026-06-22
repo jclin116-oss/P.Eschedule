@@ -10,7 +10,6 @@ st.title("🏛️ 跨機關行程觀測系統")
 # ==========================================
 # 1. 全域日期選擇器 (主控台)
 # ==========================================
-# 系統會自動對齊並撈出雙方當天行程
 target_date = st.selectbox(
     "📅 請選擇欲觀測的統一日期（系統會自動對齊並撈出雙方當天行程）：",
     options=["6月23日", "6月24日"]
@@ -21,7 +20,6 @@ st.markdown(f"## 🔍 觀測焦點：{target_date}")
 # ==========================================
 # 2. 資料庫 / 爬蟲 Raw Text 模擬來源
 # ==========================================
-# 這裡模擬你各機關爬蟲抓到的 Raw Data，實務上可對接你的資料庫或檔案
 raw_data_store = {
     "6月23日": {
         "moea": [
@@ -60,7 +58,7 @@ raw_data_store = {
 }
 
 # ==========================================
-# 3. 總統府核心切分邏輯解析器
+# 3. 總統府核心切分邏輯解析器 (包含無行程列出)
 # ==========================================
 def parse_president_schedule(text):
     if not text:
@@ -71,22 +69,33 @@ def parse_president_schedule(text):
     parsed_data = []
     current_role = None
     
+    # 用來追蹤當天有哪些角色已經被處理過
+    found_roles = set()
+    
     for line in lines:
         if line in target_roles:
             current_role = line
+            found_roles.add(current_role)
             continue
         elif line == "總統府":
             current_role = None
             continue
             
         if current_role:
-            # 排除無公開行程，僅紀錄實質行程
-            if "無公開行程" not in line:
-                parsed_data.append({
-                    "首長類別": current_role,
-                    "行程內容": line
-                })
-                
+            parsed_data.append({
+                "首長類別": current_role,
+                "行程內容": line
+            })
+            current_role = None # 確保一個角色只接應其下方的一行內容
+            
+    # 🔍 補漏機制：如果目標角色當天完全沒有出現在文本下方（或漏抓），補上無公開行程
+    for role in target_roles:
+        if role not in found_roles:
+            parsed_data.append({
+                "首長類別": role,
+                "行程內容": "無公開行程"
+            })
+            
     return pd.DataFrame(parsed_data)
 
 # 獲取當前日期的資料
@@ -103,22 +112,23 @@ else:
     st.info("經濟部在當天無公告行程資料。")
 
 # ==========================================
-# 5. 總統府首長行程看板 (與經濟部完全一致的表格樣式)
+# 5. 總統府首長行程看板 (無行程亦會呈現在表格中)
 # ==========================================
 st.markdown("### 🏛️ 總統府首長行程")
 
-# 呼叫解析器處理當天 Raw Text
 df_president = parse_president_schedule(current_data["president_raw"])
 
 if not df_president.empty:
-    # 樣式與欄位名稱完全對齊經濟部
+    # 依角色排序，確保表格輸出的順序固定固定（總統在前、副總統在後）
+    df_president['sort'] = df_president['首長類別'].map({'總統': 0, '副總統': 1})
+    df_president = df_president.sort_values('sort').drop('sort', axis=1).reset_index(drop=True)
+    
     st.table(df_president)
 else:
-    # 預留原本的提示藍框樣式
     st.info(f"總統府在 {target_date} 無任何公告行程資料。")
 
 # ==========================================
-# 6. 後台全量文字協作區塊 (置於底部，方便除錯與新機關協作)
+# 6. 後台全量文字協作區塊
 # ==========================================
 st.markdown("---")
 with st.expander("📝 查看各機關原始撈取文本 (後台除錯與協作用)"):
