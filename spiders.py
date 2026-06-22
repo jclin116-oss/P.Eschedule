@@ -60,23 +60,15 @@ class ScheduleSpider:
         clean_date = date_str.replace("-", "")
         premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date)
         vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date)
-        
-        schedules = premier_schedules + vice_premier_schedules
-        if not schedules:
-            return [
-                {"官職": "行政院長", "行程內容": "該日期無公開行程", "時間/地點": "-", "網址": "https://www.ey.gov.tw"},
-                {"官職": "行政副院長", "行程內容": "該日期無公開行程", "時間/地點": "-", "網址": "https://www.ey.gov.tw"}
-            ]
-        return schedules
+        return premier_schedules + vice_premier_schedules
 
     def get_president_schedule(self, date_variants):
         """抓取總統府行程（網頁 HTML 解析）"""
         url = "https://www.president.gov.tw/Page/37"
-        target_name = "總統"
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-", "網址": url}]
+                return [{"官職": "總統", "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-", "網址": url}]
                 
             res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, 'html.parser')
@@ -100,21 +92,17 @@ class ScheduleSpider:
                             "時間/地點": "詳見官網行程頁",
                             "網址": href if href else url
                         })
-            
-            if not schedules:
-                return [{"官職": target_name, "行程內容": "該日期於官網頁面無公開行程顯示", "時間/地點": "-", "網址": url}]
             return schedules
         except Exception as e:
-            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-", "網址": url}]
+            return [{"官職": "總統", "行程內容": f"連線異常: {str(e)}", "時間/地點": "-", "網址": url}]
 
     def get_moea_schedule(self, date_variants):
         """使用 RSS 抓取經濟部長行程"""
         url = "https://www.moea.gov.tw/Mns/populace/news/NewsRSSDetail.aspx?Kind=10"
-        target_name = "經濟部長"
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return [{"官職": target_name, "行程內容": f"RSS站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-", "網址": url}]
+                return [{"官職": "經濟部長", "行程內容": f"RSS站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-", "網址": url}]
                 
             res.encoding = 'utf-8'
             try:
@@ -140,14 +128,11 @@ class ScheduleSpider:
                     if "暫無行程" in description or "無公開行程" in description:
                         continue
                     schedules.append({
-                        "官職": target_name,
+                        "官職": "經濟部長",
                         "行程內容": description if description else title,
                         "時間/地點": title,
                         "網址": link if link else url
                     })
-            
-            if not schedules:
-                return [{"官職": target_name, "行程內容": "該日期於經濟部 RSS 中無公開行程", "時間/地點": "-", "網址": url}]
             return schedules
         except Exception as e:
-            return [{"官職": target_name, "行程內容": f"RSS連線異常: {str(e)}", "時間/地點": "-", "網址": url}]
+            return [{"官職": "經濟部長", "行程內容": f"RSS連線異常: {str(e)}", "時間/地點": "-", "網址": url}]
