@@ -2,7 +2,6 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import urllib3
-# 修正重點：改從 urllib3.exceptions 匯入錯誤類型
 from urllib3.exceptions import InsecureRequestWarning
 
 # 關閉 SSL 驗證警告
@@ -30,6 +29,9 @@ class ScheduleSpider:
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})，可能遭 IP 封鎖", "時間/地點": "-"}]
 
+            # 修正：強制指定 UTF-8 編碼
+            res.encoding = 'utf-8'
+            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
@@ -66,6 +68,9 @@ class ScheduleSpider:
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
                 
+            # 修正：強制指定 UTF-8 編碼，解決總統府資料亂碼問題
+            res.encoding = 'utf-8'
+            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
@@ -94,6 +99,9 @@ class ScheduleSpider:
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
                 
+            # 修正：強制指定 UTF-8 編碼
+            res.encoding = 'utf-8'
+            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
