@@ -1,141 +1,43 @@
+import feedparser
 import requests
 from bs4 import BeautifulSoup
-import urllib3
-from urllib3.exceptions import InsecureRequestWarning
+import pandas as pd
 
-# 關閉 SSL 驗證警告
-urllib3.disable_warnings(InsecureRequestWarning)
+def fetch_rss_data(url):
+    """抓取 RSS 並轉換為 DataFrame"""
+    try:
+        feed = feedparser.parse(url)
+        data = []
+        for entry in feed.entries:
+            data.append({
+                "標題": entry.title,
+                "連結": entry.link,
+                "日期": entry.published
+            })
+        return pd.DataFrame(data)
+    except Exception as e:
+        return pd.DataFrame([{"標題": "資料讀取失敗", "連結": "#", "日期": str(e)}])
 
-class ScheduleSpider:
-    def __init__(self):
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
-        }
-
-    def _match_date(self, text, date_variants):
-        """檢查文本內是否包含任何一種日期變體"""
-        return any(v in text for v in date_variants)
-
-    def _fetch_ey_rss(self, pid, target_name, clean_date):
-        """內部工具：抓取行政院特定首長 RSS"""
-        url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID={pid}&SD={clean_date}&ED={clean_date}"
-        schedules = []
-        try:
-            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
-            if res.status_code != 200:
-                return []
-            
-            res.encoding = 'utf-8'
-            try:
-                soup = BeautifulSoup(res.text, 'xml')
-                items = soup.find_all('item')
-            except Exception:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                items = soup.find_all('item')
-                
-            for item in items:
-                title_node = item.find('title')
-                desc_node = item.find('description')
-                
-                title = title_node.get_text().strip() if title_node else ""
-                description = desc_node.get_text().strip() if desc_node else ""
-                
-                if title:
-                    schedules.append({
-                        "官職": target_name,
-                        "行程內容": title,
-                        "時間/地點": description if description else "詳見內文"
-                    })
-        except Exception:
-            pass
-        return schedules
-
-    def get_ey_schedule(self, date_str):
-        """抓取行政院行程（院長與副院長 RSS 頻道）"""
-        clean_date = date_str.replace("-", "")
-        premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date)
-        vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date)
+def get_president_schedule():
+    """抓取總統府行程"""
+    url = "https://www.president.gov.tw/Page/37"
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        schedules = premier_schedules + vice_premier_schedules
-        if not schedules:
-            return [
-                {"官職": "行政院長", "行程內容": "該日期無公開行程", "時間/地點": "-"},
-                {"官職": "行政副院長", "行程內容": "該日期無公開行程", "時間/地點": "-"}
-            ]
-        return schedules
-
-    def get_president_schedule(self, date_variants):
-        """抓取總統府行程（網頁 HTML 解析）"""
-        url = "https://www.president.gov.tw/Page/37"
-        target_name = "總統"
-        try:
-            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
-            if res.status_code != 200:
-                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
-                
-            res.encoding = 'utf-8'
-            soup = BeautifulSoup(res.text, 'html.parser')
-            schedules = []
-            
-            items = soup.select('tr') or soup.select('li') or soup.select('.p-list-item')
+        schedule_data = []
+        unit_lists = soup.select(".unitList")
+        
+        for unit in unit_lists:
+            title = unit.select_one(".unitTitle").get_text(strip=True) if unit.select_one(".unitTitle") else "未知"
+            items = unit.select(".timeIB")
             for item in items:
-                text = " ".join(item.get_text(separator=" ").split())
-                if text and len(text) > 10 and "頁面" not in text and "版權所有" not in text:
-                    if self._match_date(text, date_variants):
-                        display_name = "副總統" if "副總統" in text else "總統"
-                        schedules.append({
-                            "官職": display_name,
-                            "行程內容": text,
-                            "時間/地點": "詳見官網行程頁"
-                        })
-            
-            if not schedules:
-                return [{"官職": target_name, "行程內容": "該日期於官網頁面無公開行程顯示", "時間/地點": "-"}]
-            return schedules
-        except Exception as e:
-            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
-
-    def get_moea_schedule(self, date_variants):
-        """改用 RSS 抓取經濟部長行程"""
-        url = "https://www.moea.gov.tw/Mns/populace/news/NewsRSSDetail.aspx?Kind=10"
-        target_name = "經濟部長"
-        try:
-            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
-            if res.status_code != 200:
-                return [{"官職": target_name, "行程內容": f"RSS站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
-                
-            res.encoding = 'utf-8'
-            try:
-                soup = BeautifulSoup(res.text, 'xml')
-                items = soup.find_all('item')
-            except Exception:
-                soup = BeautifulSoup(res.text, 'html.parser')
-                items = soup.find_all('item')
-                
-            schedules = []
-            for item in items:
-                title_node = item.find('title')
-                desc_node = item.find('description')
-                
-                title = title_node.get_text().strip() if title_node else ""
-                description = desc_node.get_text().strip() if desc_node else ""
-                
-                full_text = f"{title} {description}"
-                
-                # 比對日期變體
-                if self._match_date(full_text, date_variants):
-                    if "暫無行程" in description or "無公開行程" in description:
-                        continue
-                    schedules.append({
-                        "官職": target_name,
-                        "行程內容": description if description else title,
-                        "時間/地點": title  # 標題通常包含日期與行程通知字樣
-                    })
-            
-            if not schedules:
-                return [{"官職": target_name, "行程內容": "該日期於經濟部 RSS 中無公開行程", "時間/地點": "-"}]
-            return schedules
-        except Exception as e:
-            return [{"官職": target_name, "行程內容": f"RSS連線異常: {str(e)}", "時間/地點": "-"}]
+                content = item.get_text(strip=True)
+                schedule_data.append({"人物": title, "行程": content})
+        
+        return pd.DataFrame(schedule_data) if schedule_data else pd.DataFrame(columns=["人物", "行程"])
+    except Exception as e:
+        return pd.DataFrame([{"人物": "錯誤", "行程": f"無法載入: {e}"}])
