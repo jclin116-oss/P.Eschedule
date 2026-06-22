@@ -1,79 +1,96 @@
 import urllib.request
-import json
 import ssl
+from bs4 import BeautifulSoup
 import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="經濟部首長行程自動觀測站", layout="wide")
 st.title("💼 經濟部首長行程自動觀測站")
-st.caption("終極版：直接讀取後端資料庫介面（100% 解決空白與報錯問題）")
+st.caption("特製版：專門拆解官網時間軸（Timeline）排版結構")
 
-# 1. 設計「一鍵抓取」按鈕
+# 1. 一鍵抓取按鈕
 if st.button("🔄 一鍵抓取最新行程（並整理成表格）") or 'schedule_df' not in st.session_state:
     
-    # 這是經濟部後端真正的資料來源 API 網址
-    api_url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'X-Requested-With': 'XMLHttpRequest', # 告訴後端我們是要撈非同步資料
-        'Accept': 'application/json, text/javascript, */*; q=0.01'
-    }
+    url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     
     try:
         context = ssl._create_unverified_context()
+        req = urllib.request.Request(url, headers=headers)
         
-        # 嘗試使用 Python 直接把網頁內的隱藏 JSON 提取出來
-        # 註：如果該 API 需要 POST 參數，我們改用 requests 模擬，但這裡先用標準 GET 測試攔截
-        req = urllib.request.Request(api_url, headers=headers)
         with urllib.request.urlopen(req, context=context) as response:
-            html_content = response.read().decode('utf-8')
+            html = response.read()
             
-        # 由於政府網站可能直接回傳拼裝好的 HTML 片段，我們用最粗暴但也最有效的 pandas 內建讀取法：
-        # pandas.read_html 可以直接把網頁字串中所有的 table 轉成 DataFrame
-        tables = pd.read_html(html_content)
+        soup = BeautifulSoup(html, 'html.parser')
         
-        # 尋找真正包含行程的表格 (過濾掉選單等雜質)
-        valid_df = None
-        for table in tables:
-            if len(table) > 1 and len(table.columns) >= 3:
-                # 檢查這張表是不是我們要的
-                table_string = table.to_string()
-                if "部長" in table_string or "次長" in table_string or "行程" in table_string:
-                    valid_df = table
-                    break
-                    
-        if valid_df is not None:
-            # 清理表格資料，移除換行符號
-            valid_df = valid_df.astype(str).apply(lambda x: x.str.replace(r'\s+', ' ', regex=True).str.strip())
-            
-            # 給予標準欄位名稱
-            if len(valid_df.columns) == 4:
-                valid_df.columns = ["時間/日期", "首長", "行程內容", "地點"]
-            elif len(valid_df.columns) == 3:
-                valid_df.columns = ["時間/日期", "首長", "行程內容"]
-                valid_df["地點"] = "未標註"
+        # 尋找時間軸的大容器 (通常在 class 包含 schedule 或內容區)
+        # 由於政府網站內部常有動態包裝，我們直接抓取最關鍵的「日期標籤」與「行程內容方塊」
+        # 經濟部常見的標籤特性：日期通常會包含在特定的 class 或帶有日期的文字中
+        
+        timeline_items = soup.find_all(['div', 'span', 'li', 'td'])
+        
+        data = []
+        current_date = "未定日期"
+        
+        # 遍歷網頁所有元素，用邏輯「重新綁定」日期與行程
+        for item in timeline_items:
+            text = item.text.strip().replace('\n', ' ').replace('\r', '')
+            if not text:
+                continue
                 
-            # 建立一個萬能搜尋欄位
-            valid_df["all_text"] = valid_df.apply(lambda row: " ".join(row.values), axis=1)
-            st.session_state.schedule_df = valid_df
-            st.success(f"🎉 終極抓取成功！已攔截到最新 {len(valid_df)} 筆官方排定行程。")
+            # 判斷是不是日期標籤（例如：包含 "6月23日" 或像截圖中的黃色黃底日期）
+            # 這裡用正則或關鍵字特徵來辨識
+            if ("月" in text and "日" in text and len(text) < 20) or ("2026" in text and len(text) < 25):
+                current_date = text
+                continue
+                
+            # 判斷是不是行程方塊（包含 部長、次長 關鍵字，且有一定字數）
+            if ("部長" in text or "次長" in text) and len(text) > 10:
+                # 嘗試切分首長、行程與地點
+                leader = "部長" if "部長" in text else "次長"
+                
+                # 抽取地點（通常寫在 地點：後面）
+                location = "未標註"
+                if "地點" in text:
+                    parts = text.split("地點")
+                    if len(parts) > 1:
+                        location = parts[1].replace("：", "").strip()
+                
+                data.append({
+                    "時間/日期": current_date,
+                    "首長": leader,
+                    "行程內容": text,
+                    "地點": location,
+                    "all_text": f"{current_date} {text}"
+                })
+                
+        # 如果精準抓取沒撈到，啟動暴力保底方案：直接把含有首長關鍵字的區塊全抓出來
+        if not data:
+            cards = soup.find_all(lambda tag: tag.name in ['div', 'li'] and ('部長' in tag.text or '次長' in tag.text))
+            for card in cards:
+                t = card.text.strip().replace('\n', ' ')
+                if len(t) > 15 and "首長類別" not in t:
+                    data.append({
+                        "時間/日期": "請對照當週",
+                        "首長": "部次長",
+                        "行程內容": t,
+                        "地點": "見內容說明",
+                        "all_text": t
+                    })
+
+        if data:
+            # 去除重複抓取的雜訊行
+            df = pd.DataFrame(data).drop_duplicates(subset=['行程內容'])
+            st.session_state.schedule_df = df
+            st.success(f"🎉 成功解構時間軸！共抓到 {len(df)} 筆即時行程。")
         else:
-            # 方案 B 備用彈性方案：如果連 pd.read_html 都失靈，代表對端徹底轉為純粹的 AJAX
-            # 這時我們改用文字串流大法，直接暴力提取網頁內的關鍵字行
-            lines = [line.strip() for line in html_content.split('\n') if any(k in line for k in ["部長", "次長", "月", "日"])]
-            if len(lines) > 5:
-                st.warning("⚠️ 攔截到動態文本，但格式非標準表格，已啟動預備渲染。")
-                # 建立虛擬表格
-                st.session_state.schedule_df = pd.DataFrame({"原始動態資料": lines[:30], "all_text": lines[:30]})
-            else:
-                st.error("經濟部後端框架啟動了全面防爬機制，請點選下方展開偵錯。")
-                with st.expander("對端原始碼內容"):
-                    st.code(html_content[:2000], language="html")
-                    
+            st.error("未能成功解析時間軸，請展開下方查看官網目前實際的文字結構。")
+            with st.expander("官網文字結構"):
+                st.write(soup.text[:2000])
+                
     except Exception as e:
-        st.error(f"連線攔截失敗: {e}")
+        st.error(f"抓取失敗: {e}")
 
 # 2. 呈現與整理資料
 if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
@@ -84,22 +101,18 @@ if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
     with tab1:
         st.subheader("📌 快速篩選觀測")
         
-        # 彈性配合「6月23日」格式
         now = datetime.now() + timedelta(days=1)
         tomorrow_str = f"{now.month}月{now.day}日" 
         
-        search_query = st.text_input(
-            "請輸入欲查詢的日期關鍵字（例如 `6月23日` 或 `部長`）", 
-            value=tomorrow_str
-        )
+        search_query = st.text_input("請輸入欲查詢的日期或關鍵字", value=tomorrow_str)
         
         if search_query:
             filtered_df = df[df['all_text'].str.contains(search_query, na=False)]
             if not filtered_df.empty:
-                st.dataframe(filtered_df.drop(columns=['all_text'], errors='ignore'), use_container_width=True)
+                st.dataframe(filtered_df.drop(columns=['all_text']), use_container_width=True)
             else:
-                st.info(f"查無關鍵字「{search_query}」相關的行程。可能官方今日尚未登錄。")
+                st.info(f"查無「{search_query}」的行程。可能官方尚未上架或當日無公開行程。")
                 
     with tab2:
         st.subheader("📋 官網目前公告之所有行程")
-        st.dataframe(df.drop(columns=['all_text'], errors='ignore'), use_container_width=True)
+        st.dataframe(df.drop(columns=['all_text']), use_container_width=True)
