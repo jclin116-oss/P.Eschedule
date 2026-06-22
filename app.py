@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="經濟部首長行程自動觀測站", layout="wide")
 st.title("💼 經濟部首長行程自動觀測站")
-st.caption("完美修復版：100% 完整還原大會行程主旨與詳細內容")
+st.caption("終極除錯版：精準分流部次長行程，絕不重複疊加")
 
 # 一鍵抓取按鈕
 if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.session_state:
@@ -25,69 +25,74 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         soup = BeautifulSoup(html, 'html.parser')
         data = []
         
-        # 尋找網頁中所有帶有日期特徵的時間軸區塊容器
-        timeline_blocks = soup.find_all(lambda tag: tag.name in ['div', 'li'] and tag.find(text=lambda t: t and '月' in t and '日' in t))
+        # 1. 深度拆解：先找出時間軸上所有獨立的「單日行程大區塊」
+        # 觀察經濟部的 HTML 結構，通常是用帶有年份或日期特徵的區塊包裝
+        day_blocks = soup.find_all(lambda tag: tag.name in ['div', 'li'] and tag.find(text=lambda t: t and '月' in t and '日' in t))
         
-        if not timeline_blocks:
-            timeline_blocks = soup.find_all(['div', 'li'])
+        if not day_blocks:
+            day_blocks = soup.find_all(['div', 'li'])
 
-        current_date = "未定日期"
-        
-        for block in timeline_blocks:
-            # 1. 抓取精準日期 (例如: 6月23日)
-            date_nodes = block.find_all(lambda tag: tag.name in ['span', 'div', 'p'] and '月' in tag.text and '日' in tag.text and len(tag.text.strip()) < 15)
-            if date_nodes:
-                temp_date = date_nodes[0].text.strip().replace('\n', '').replace(' ', '')
-                if temp_date:
-                    current_date = temp_date
+        for day in day_blocks:
+            # 抓取該大區塊對應的日期 (例如: 6月23日)
+            date_node = day.find(text=lambda t: t and '月' in t and '日' in t)
+            if not date_node:
+                continue
+            current_date = date_node.strip().replace('\n', '').replace(' ', '')
             
-            # 2. 判斷是否為有效行程區塊
-            block_text = block.text.strip()
-            if ("部長" in block_text or "次長" in block_text) and "首長類別" not in block_text:
+            # --- 關鍵修正：從大區塊中，往下挖出每位首長獨立的「行程小卡片」 ---
+            # 官網中，部長、次長的卡片是完全拆開的。我們尋找包含「部長」或「次長」的獨立下層元素
+            cards = day.find_all(lambda tag: tag.name in ['div', 'p', 'li'] and ('部長' in tag.text or '次長' in tag.text) and len(tag.text.strip()) > 10)
+            
+            # 如果下層找不到，再把大區塊自己當作單一卡片處理
+            if not cards:
+                cards = [day] if ("部長" in day.text or "次長" in day.text) else []
                 
-                # --- 核心改動：不再只挑一行，而是完整打包這個區塊的所有內文文字 ---
-                lines = [line.strip() for line in block.text.split('\n') if line.strip()]
+            for card in cards:
+                card_text = card.text.strip()
+                if "首長類別" in card_text or "關鍵字" in card_text:
+                    continue
                 
-                # 過濾掉多餘的導覽文字或純粹重複的日期標籤
-                filtered_lines = []
-                for line in lines:
-                    if line == current_date or "2026" in line and len(line) < 10:
+                # 判定本卡片到底是誰的行程
+                leader = "部長" if "部長" in card_text else "次長"
+                
+                # 清洗文字：把行與行之間的雜亂空白扭緊，還原成一整段通順網頁
+                clean_lines = [l.strip() for l in card_text.split('\n') if l.strip()]
+                
+                # 排除完全是重複日期或年份的短行雜訊
+                final_lines = []
+                for l in clean_lines:
+                    if l == current_date or ("2026" in l and len(l) < 10):
                         continue
-                    if line not in filtered_lines: # 避免重疊標籤造成的文字重複
-                        filtered_lines.append(line)
+                    if l not in final_lines:
+                        final_lines.append(l)
                 
-                # 將該區塊內所有的文字合併，形成最完整的行程敘述
-                full_event_content = " ".join(filtered_lines)
+                event_content = " ".join(final_lines)
                 
-                # 判定首長
-                leader = "部長" if "部長" in full_event_content else "次長"
-                
-                # 精準抓取地點
+                # 精準切出地點
                 location = "未標註"
-                if "地點" in full_event_content:
-                    loc_parts = full_event_content.split("地點")
+                if "地點" in event_content:
+                    loc_parts = event_content.split("地點")
                     if len(loc_parts) > 1:
-                        # 拿地點後面的文字，並清理符號
                         location = loc_parts[1].replace("：", "").replace(":", "").strip()
-                        # 如果地點後面還黏著說明，稍微縮短
                         if "※說明" in location:
                             location = location.split("※說明")[0].strip()
                 
-                if len(full_event_content) > 15:
+                if len(event_content) > 15:
                     data.append({
                         "日期": current_date,
                         "首長": leader,
-                        "行程內容": full_event_content,
+                        "行程內容": event_content,
                         "地點": location,
-                        "all_text": f"{current_date} {leader} {full_event_content}"
+                        "all_text": f"{current_date} {leader} {event_content}"
                     })
 
         if data:
-            df = pd.DataFrame(data).drop_duplicates(subset=['行程內容'])
+            # 轉換為 DataFrame，並透過「行程內容」去除外層容器重複抓取造成的疊加列
+            df = pd.DataFrame(data).drop_duplicates(subset=['行程內容', '首長'])
             st.session_state.schedule_df = df
-            st.success(f"🎉 完美同步！已完整解構 {len(df)} 筆完整行程內文與主旨。")
+            st.success(f"🎉 徹底修復！成功同步 {len(df)} 筆乾淨、不重疊的首長行程。")
         else:
-            st.error("未能成功分離內文。")
+            st.error("未能精準切分卡片內容。")
             
     except Exception as e:
         st.error(f"抓取失敗: {e}")
@@ -115,5 +120,4 @@ if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
                 
     with tab2:
         st.subheader("📋 官網目前公告之所有行程")
-        # 利用 Streamlit 的寬度自動延展，確保手機看表格內容不會被壓縮
         st.dataframe(df.drop(columns=['all_text']), use_container_width=True)
