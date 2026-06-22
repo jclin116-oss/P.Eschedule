@@ -3,3 +3,4 @@ pandas
 feedparser
 requests
 beautifulsoup4
+certifi
