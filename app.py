@@ -32,8 +32,8 @@ spider = ScheduleSpider()
 if st.button("🔄 立即更新並篩選行程資料", type="primary"):
     with st.spinner(f"正在連線各部會數據源並篩選 {date_str} 資料..."):
         
-        # 抓取數據
-        ey_data = spider.get_ey_schedule(date_str)
+        # 修正：將 date_variants 傳入 get_ey_schedule 進行二次日期核對
+        ey_data = spider.get_ey_schedule(date_str, date_variants)
         president_data = spider.get_president_schedule(date_variants)
         moea_data = spider.get_moea_schedule(date_variants)
         
