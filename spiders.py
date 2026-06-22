@@ -18,8 +18,8 @@ class ScheduleSpider:
         """檢查文本內是否包含任何一種日期變體"""
         return any(v in text for v in date_variants)
 
-    def _fetch_ey_rss(self, pid, target_name, clean_date):
-        """內部工具：抓取行政院特定首長 RSS"""
+    def _fetch_ey_rss(self, pid, target_name, clean_date, date_variants):
+        """內部工具：抓取行政院特定首長 RSS，並嚴格比對日期變體"""
         url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID={pid}&SD={clean_date}&ED={clean_date}"
         schedules = []
         try:
@@ -44,7 +44,10 @@ class ScheduleSpider:
                 description = desc_node.get_text().strip() if desc_node else ""
                 link = link_node.get_text().strip() if link_node else ""
                 
-                if title:
+                # 將標題、內文整合進行日期強檢驗，避免行政院網站自動回傳非指定日期的歷史資料
+                full_text = f"{title} {description}"
+                
+                if title and self._match_date(full_text, date_variants):
                     schedules.append({
                         "官職": target_name,
                         "行程內容": title,
@@ -55,11 +58,11 @@ class ScheduleSpider:
             pass
         return schedules
 
-    def get_ey_schedule(self, date_str):
-        """抓取行政院行程（院長與副院長 RSS 頻道）"""
+    def get_ey_schedule(self, date_str, date_variants):
+        """抓取行政院行程（院長與副院長 RSS 頻道），引入 date_variants 交叉比對"""
         clean_date = date_str.replace("-", "")
-        premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date)
-        vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date)
+        premier_schedules = self._fetch_ey_rss("c98e07e2-66b4-4c90-a68d-2ef8ef8cf550", "行政院長", clean_date, date_variants)
+        vice_premier_schedules = self._fetch_ey_rss("018a38fc-8461-4687-9bc1-35606d50db8a", "行政副院長", clean_date, date_variants)
         return premier_schedules + vice_premier_schedules
 
     def get_president_schedule(self, date_variants):
