@@ -12,7 +12,7 @@ today = datetime.now().date()
 selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
 date_str = selected_date.strftime("%Y-%m-%d")
 
-# 建立多元日期字串格式，供總統府與經濟部 RSS 進行過濾
+# 建立多元日期字串格式
 roc_year = selected_date.year - 1911
 date_variants = [
     date_str,                                      # 2026-06-22
@@ -39,50 +39,74 @@ if st.button("🔄 立即更新並篩選行程資料", type="primary"):
         
         all_data = president_data + ey_data + moea_data
         
+        # 轉換為初始 DataFrame
         if all_data:
             df = pd.DataFrame(all_data)
-            
-            # 官階排序 (總統 -> 副總統 -> 行政院長 -> 行政副院長 -> 經濟部長)
-            job_order = ["總統", "副總統", "行政院長", "行政副院長", "經濟部長"]
-            df['官職'] = pd.Categorical(df['官職'], categories=job_order, ordered=True)
-            df = df.sort_values(by='官職').dropna(subset=['官職'])
-            
-            # 檢查時間戳記
-            df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            
-            # 調整欄位排序：將網址獨立整合為「詳細內文」按鈕欄位
-            df = df[['官職', '行程內容', '時間/地點', '網址', '檢查時間']]
-            
-            st.success(f"{date_str} 資料篩選與官階排序完成！")
-            st.subheader(f"📅 {date_str} 行程列表")
-            
-            # --- 安全穩定的超連結表格渲染方案 ---
-            st.dataframe(
-                df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "官職": st.column_config.TextColumn("官職"),
-                    "行程內容": st.column_config.TextColumn("行程內容"),
-                    "時間/地點": st.column_config.TextColumn("時間/地點"),
-                    "網址": st.column_config.LinkColumn(
-                        "詳細內文",
-                        help="點擊即可開啟原始公告網頁查看詳細說明",
-                        display_text="🔗 前往內文"  # 隱藏複雜網址，統一格式化為文字按鈕
-                    ),
-                    "檢查時間": st.column_config.TextColumn("檢查時間")
-                }
-            )
-            
-            # 下載 CSV 功能
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 下載此日期行程報表 (CSV)",
-                data=csv,
-                file_name=f"gov_schedule_{date_str}.csv",
-                mime="text/csv",
-            )
         else:
-            st.warning(f"未能成功獲取任何首長資料。")
+            df = pd.DataFrame(columns=['官職', '行程內容', '時間/地點', '網址'])
+            
+        # --- 全局補齊機制：確保 5 個官職必定出現在表格中 ---
+        job_order = ["總統", "副總統", "行政院長", "行政副院長", "經濟部長"]
+        default_urls = {
+            "總統": "https://www.president.gov.tw/Page/37",
+            "副總統": "https://www.president.gov.tw/Page/37",
+            "行政院長": "https://www.ey.gov.tw",
+            "行政副院長": "https://www.ey.gov.tw",
+            "經濟部長": "https://www.moea.gov.tw/Mns/populace/news/NewsRSSDetail.aspx?Kind=10"
+        }
+        
+        existing_jobs = df['官職'].unique() if not df.empty else []
+        missing_rows = []
+        for job in job_order:
+            if job not in existing_jobs:
+                missing_rows.append({
+                    "官職": job,
+                    "行程內容": "該日期無公開行程",
+                    "時間/地點": "-",
+                    "網址": default_urls[job]
+                })
+        
+        if missing_rows:
+            df = pd.concat([df, pd.DataFrame(missing_rows)], ignore_index=True)
+        
+        # 官階排序
+        df['官職'] = pd.Categorical(df['官職'], categories=job_order, ordered=True)
+        df = df.sort_values(by='官職').dropna(subset=['官職'])
+        
+        # 檢查時間戳記
+        df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        
+        # 調整欄位排序
+        df = df[['官職', '行程內容', '時間/地點', '網址', '檢查時間']]
+        
+        st.success(f"{date_str} 資料篩選與官階排序完成！")
+        st.subheader(f"📅 {date_str} 行程列表")
+        
+        # 表格渲染
+        st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "官職": st.column_config.TextColumn("官職"),
+                "行程內容": st.column_config.TextColumn("行程內容"),
+                "時間/地點": st.column_config.TextColumn("時間/地點"),
+                "網址": st.column_config.LinkColumn(
+                    "詳細內文",
+                    help="點擊即可開啟原始公告網頁查看詳細說明",
+                    display_text="🔗 前往內文"
+                ),
+                "檢查時間": st.column_config.TextColumn("檢查時間")
+            }
+        )
+        
+        # 下載 CSV 功能
+        csv = df.to_csv(index=False).encode('utf-8-sig')
+        st.download_button(
+            label="📥 下載此日期行程報表 (CSV)",
+            data=csv,
+            file_name=f"gov_schedule_{date_str}.csv",
+            mime="text/csv",
+        )
 else:
     st.info("請選擇日期並點擊上方按鈕開始查詢。")
