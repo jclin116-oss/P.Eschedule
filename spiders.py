@@ -18,20 +18,25 @@ class ScheduleSpider:
         """檢查文本內是否包含任何一種日期變體"""
         return any(v in text for v in date_variants)
 
-    def get_ey_schedule(self, date_variants):
-        """抓取行政院行程：雙層解析版（先抓 RSS 列表，再深入內頁抓具體行程時間與地點）"""
-        rss_url = "https://www.ey.gov.tw/RSS/Program/ECE410333003326E"
+    def get_ey_schedule(self, date_str):
+        """
+        抓取行政院行程：直接帶入參數型 RSS 網址
+        date_str 格式固定為 'YYYY-MM-DD' (來自 app.py)
+        """
+        # 將 '2026-06-22' 轉換為行政院需要的 '20260622' 格式
+        clean_date = date_str.replace("-", "")
+        
+        # 動態拼接網址，讓行政院直接吐回該日期的精準 RSS
+        url = f"https://www.ey.gov.tw/RSS_Content2.aspx?PID=c98e07e2-66b4-4c90-a68d-2ef8ef8cf550&SD={clean_date}&ED={clean_date}"
         
         try:
-            # 第一層：讀取 RSS 清單
-            res = requests.get(rss_url, headers=self.headers, timeout=12, verify=False)
+            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return [{"官職": "行政院", "行程內容": f"RSS 清單回應異常 (HTTP {res.status_code})", "時間/地點": "-"}]
+                return [{"官職": "行政院", "行程內容": f"RSS 回應異常 (HTTP {res.status_code})", "時間/地點": "-"}]
             
-            # 強制指定編碼，防範亂碼
             res.encoding = 'utf-8'
             
-            # 容錯處理：優先使用 xml 解析器，若環境缺少 lxml 則自動降級使用 html.parser
+            # 容錯解析 XML
             try:
                 soup = BeautifulSoup(res.text, 'xml')
                 items = soup.find_all('item')
@@ -43,68 +48,27 @@ class ScheduleSpider:
             
             for item in items:
                 title_node = item.find('title')
-                link_node = item.find('link')
+                desc_node = item.find('description')
                 
                 title = title_node.get_text().strip() if title_node else ""
-                link = link_node.get_text().strip() if link_node else ""
+                description = desc_node.get_text().strip() if desc_node else ""
                 
-                # 檢查 RSS 標題是否符合使用者選定的日期
-                if self._match_date(title, date_variants) and link:
-                    target = "行政院長" if "院長" in title and "副院長" not in title else ("行政副院長" if "副院長" in title else "行政院綜合")
+                if title:
+                    # 判斷院長或副院長
+                    target = "行政院長" if "院長" in title and "副院長" not in title else ("行政副院長" if "副院長" in title else "行政院行程")
                     
-                    # 第二層：點進去詳細內容頁 (例如 RSS_Content2.aspx?PID=...)
-                    try:
-                        detail_res = requests.get(link, headers=self.headers, timeout=10, verify=False)
-                        if detail_res.status_code == 200:
-                            detail_res.encoding = 'utf-8'
-                            detail_soup = BeautifulSoup(detail_res.text, 'html.parser')
-                            
-                            # 優先抓取詳細頁內部的表格結構 (通常行程都在表格內)
-                            rows = detail_soup.select('tr')
-                            detail_found = False
-                            
-                            for row in rows:
-                                tds = row.select('td')
-                                if len(tds) >= 2:
-                                    time_loc = " ".join(tds[0].get_text(separator=" ").split())
-                                    content = " ".join(tds[1].get_text(separator=" ").split())
-                                    
-                                    if content and "暫無行程" not in content and "無公開行程" not in content and len(content) > 3:
-                                        schedules.append({
-                                            "官職": target,
-                                            "行程內容": content,
-                                            "時間/地點": time_loc
-                                        })
-                                        detail_found = True
-                            
-                            # 備用方案：如果表格沒抓到，抓取特定文章主體區塊的文字
-                            if not detail_found:
-                                main_content = detail_soup.select_one('.p-content') or detail_soup.select_one('article') or detail_soup.select_one('#Content')
-                                if main_content:
-                                    text_lines = [line.strip() for line in main_content.get_text(separator="\n").split("\n") if line.strip()]
-                                    clean_text = " | ".join(text_lines)
-                                    if len(clean_text) > 10:
-                                        schedules.append({
-                                            "官職": target,
-                                            "行程內容": clean_text,
-                                            "時間/地點": "見內文說明"
-                                        })
-                                        detail_found = True
-                                        
-                    except Exception as detail_err:
-                        # 詳細頁連線失敗時，降級保留原本 RSS 的基本標題
-                        schedules.append({
-                            "官職": target,
-                            "行程內容": f"{title} (詳細頁連線失敗: {str(detail_err)})",
-                            "時間/地點": link
-                        })
+                    schedules.append({
+                        "官職": target,
+                        "行程內容": title,
+                        "時間/地點": description if description else "詳見內文"
+                    })
             
             if not schedules:
-                return [{"官職": "行政院行程", "行程內容": "該日期於 RSS 詳細頁面內無公開行程內容", "時間/地點": "-"}]
+                return [{"官職": "行政院行程", "行程內容": "該日期於行政院 RSS 中無公開行程", "時間/地點": "-"}]
             return schedules
             
         except Exception as e:
-            return [{"官職": "行政院", "行程內容": f"RSS 雙層解析異常: {str(e)}", "時間/地點": "-"}]
+            return [{"官職": "行政院", "行程內容": f"RSS 連線異常: {str(e)}", "時間/地點": "-"}]
 
     def get_president_schedule(self, date_variants):
         """抓取總統府行程並過濾日期"""
