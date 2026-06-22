@@ -3,7 +3,7 @@ import pandas as pd
 from spiders import ScheduleSpider
 from datetime import datetime
 
-st.set_page_config(page_title="政府首長公開行程監測", layout="wide")
+st.set_page_config(page_title="政府公開行程", layout="wide")
 
 st.title("🏛️ 政府首長公開行程即時看板")
 
@@ -25,28 +25,48 @@ date_variants = [
     f"{selected_date.month}月{selected_date.day}日" # 6月22日
 ]
 
-st.caption(f"目前檢索日期：【{date_str}】。行政院與經濟部已切換為 RSS 數據源。")
+st.caption(f"目前檢索日期：【{date_str}】。資料將依據中華民國政府官階職位進行排序。")
 
 spider = ScheduleSpider()
 
 if st.button("🔄 立即更新並篩選行程資料", type="primary"):
     with st.spinner(f"正在連線各部會數據源並篩選 {date_str} 資料..."):
         
+        # 抓取各數據源
         ey_data = spider.get_ey_schedule(date_str)
         president_data = spider.get_president_schedule(date_variants)
         moea_data = spider.get_moea_schedule(date_variants)
         
+        # 合併所有行程資料列表
         all_data = president_data + ey_data + moea_data
         
         if all_data:
             df = pd.DataFrame(all_data)
-            df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            df = df[['官職', '時間/地點', '行程內容', '檢查時間']]
             
-            st.success(f"{date_str} 資料篩選完成！")
+            # --- 核心：定義官階排序邏輯 ---
+            # 定義官職的嚴格層級順序
+            job_order = ["總統", "副總統", "行政院長", "行政副院長", "經濟部長"]
+            
+            # 將無公開行程的提示進行基本清理（避免污染正常的欄位過濾邏輯）
+            # 若某些官職顯示無行程，仍會參與排序
+            df['官職'] = pd.Categorical(df['官職'], categories=job_order, ordered=True)
+            
+            # 依據官職層級進行排序 (由高至低)
+            df = df.sort_values(by='官職').dropna(subset=['官職'])
+            
+            # 補上資料檢查時間戳記
+            df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
+            
+            # 依要求重新編排欄位順序：官職 -> 行程內容 -> 時間/地點 -> 檢查時間
+            df = df[['官職', '行程內容', '時間/地點', '檢查時間']]
+            
+            st.success(f"{date_str} 資料篩選與官階排序完成！")
             st.subheader(f"📅 {date_str} 行程列表")
+            
+            # 渲染數據表格
             st.dataframe(df, use_container_width=True, hide_index=True)
             
+            # 下載 CSV 功能
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label="📥 下載此日期行程報表 (CSV)",
