@@ -1,19 +1,21 @@
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
+import urllib3
+
+# 關閉 SSL 驗證警告
+urllib3.disable_warnings(urllib3.errors.InsecureRequestWarning)
 
 class ScheduleSpider:
     def __init__(self):
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+            "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7"
         }
 
     def get_ey_schedule(self, target_type="premier"):
-        """
-        抓取行政院行程
-        target_type: "premier" (院長) 或 "vice" (副院長)
-        """
-        # 根據職位切換網址
+        """抓取行政院長/副院長行程"""
         if target_type == "premier":
             url = "https://www.ey.gov.tw/Page/278197D37F0FCDA"
             target_name = "行政院長"
@@ -22,31 +24,93 @@ class ScheduleSpider:
             target_name = "行政副院長"
 
         try:
-            res = requests.get(url, headers=self.headers, timeout=10)
+            # 關鍵修改：加入 verify=False 繞過 SSL 憑證問題
+            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
-                return []
+                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})，可能遭 IP 封鎖", "時間/地點": "-"}]
 
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
-
-            # 抓取行政院行事曆表格或列表區塊 (請依實際網頁 class 調整)
-            # 這裡以常見的 tr 或 list-item 結構做防錯處理
-            items = soup.select('tr') or soup.select('.list_item') 
+            
+            # 針對行政院常見的兩種網頁結構進行解析
+            items = soup.select('.table tr') or soup.select('tr')
             
             for item in items:
-                text = item.get_text(separator=" ").strip()
-                if not text or "暫無行程" in text:
-                    continue
-                
-                # 簡單清理文字作為示意
-                schedules.append({
-                    "官職": target_name,
-                    "行程內容": text.replace("\n", " ").split()[0:5], # 擷取部分文字
-                    "檢查時間": datetime.now().strftime("%Y-%m-%d %H:%M")
-                })
+                tds = item.select('td')
+                if len(tds) >= 2:
+                    time_loc = tds[0].get_text(separator=" ").strip()
+                    content = tds[1].get_text(separator=" ").strip()
+                    
+                    if "暫無行程" in content or "目前無相關資料" in content:
+                        continue
+                        
+                    schedules.append({
+                        "官職": target_name,
+                        "行程內容": content,
+                        "時間/地點": time_loc
+                    })
             
-            # 若無資料，回傳模擬資料供測試
-            return schedules if schedules else [{"官職": target_name, "行程內容": "今日無公開行程", "檢查時間": datetime.now().strftime("%Y-%m-%d %H:%M")}]
+            if not schedules:
+                return [{"官職": target_name, "行程內容": "今日無公開行程", "時間/地點": "-"}]
+            return schedules
 
         except Exception as e:
-            return [{"官職": target_name, "行程內容": f"錯誤: {str(e)}", "檢查時間": datetime.now().strftime("%Y-%m-%d %H:%M")}]
+            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
+
+    def get_president_schedule(self):
+        """抓取總統府行程（通常隱含在焦點新聞內）"""
+        url = "https://www.president.gov.tw/Page/94"
+        target_name = "總統"
+        try:
+            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
+            if res.status_code != 200:
+                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
+                
+            soup = BeautifulSoup(res.text, 'html.parser')
+            schedules = []
+            
+            # 總統府新聞列表結構
+            items = soup.select('.news_list li') or soup.select('tr')
+            for item in items:
+                text = item.get_text(separator=" ").strip()
+                if text:
+                    schedules.append({
+                        "官職": target_name,
+                        "行程內容": text.replace("\n", " "),
+                        "時間/地點": "詳見官網新聞"
+                    })
+            
+            if not schedules:
+                return [{"官職": target_name, "行程內容": "未偵測到今日公開行程新聞", "時間/地點": "-"}]
+            return schedules
+        except Exception as e:
+            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
+
+    def get_moea_schedule(self):
+        """抓取經濟部長行程"""
+        url = "https://www.moea.gov.tw/Mns/populace/news/News.aspx?kind=4" # 採訪通知
+        target_name = "經濟部長"
+        try:
+            res = requests.get(url, headers=self.headers, timeout=12, verify=False)
+            if res.status_code != 200:
+                return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
+                
+            soup = BeautifulSoup(res.text, 'html.parser')
+            schedules = []
+            
+            # 經濟部採訪通知列表結構
+            items = soup.select('.news_title') or soup.select('tr')
+            for item in items:
+                text = item.get_text(separator=" ").strip()
+                if "部長" in text or "出席" in text:
+                    schedules.append({
+                        "官職": target_name,
+                        "行程內容": text,
+                        "時間/地點": "由採訪通知擷取"
+                    })
+            
+            if not schedules:
+                return [{"官職": target_name, "行程內容": "今日無部長公開採訪行程", "時間/地點": "-"}]
+            return schedules
+        except Exception as e:
+            return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
