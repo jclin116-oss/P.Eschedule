@@ -6,7 +6,7 @@ import streamlit as st
 
 st.set_page_config(page_title="經濟部首長行程自動觀測站", layout="wide")
 st.title("💼 經濟部首長行程自動觀測站")
-st.caption("回歸純粹版：行程、地點與說明保持一體，絕不拆分欄位")
+st.caption("智慧選單版：自動提取官網現存日期，防止無效查詢")
 
 # 一鍵抓取按鈕
 if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.session_state:
@@ -32,7 +32,6 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         def save_current_entry():
             """將目前緩衝區累積的所有內文原封不動打包"""
             if current_buffer and current_leader:
-                # 用換行符號連接，完全保留官網原始的段落順序
                 full_content = "\n".join(current_buffer)
                 
                 # 排除頁首頁尾選單雜訊
@@ -53,7 +52,7 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
             # 1. 偵測到新日期
             if '月' in line and '日' in line and len(line) < 15:
                 if not any(tag in line for tag in LEADER_TAGS):
-                    save_current_entry() # 換日前先存檔
+                    save_current_entry()
                     current_date = line.replace("2026", "").strip()
                     current_leader = None
                     current_buffer = []
@@ -61,7 +60,7 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
             
             # 2. 偵測到核心分類標籤
             if line in LEADER_TAGS:
-                save_current_entry() # 換分類前先存檔
+                save_current_entry()
                 current_leader = line
                 current_buffer = []
                 continue
@@ -73,12 +72,11 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                 current_buffer = []
                 continue
             
-            # 4. 貪婪累積：只要確認過分類，後續每一行字通通順序塞進去，不對地點做任何特殊過濾！
+            # 4. 貪婪累積
             if current_leader:
                 if line not in current_buffer:
                     current_buffer.append(line)
                     
-                # 防禦機制：如果是「本日無公開行程」，立刻單獨打包
                 if "本日無公開行程" in line:
                     save_current_entry()
                     current_buffer = []
@@ -88,13 +86,13 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
 
         if data:
             df = pd.DataFrame(data)
-            # 濾除無公開行程的閒置列
+            # 濾除無公開行程的列
             df = df[~df['行程內容'].str.contains("無公開行程", na=False)].reset_index(drop=True)
             # 移除重複項
             df = df.drop_duplicates(subset=['日期', '首長類別', '行程內容'])
             
             st.session_state.schedule_df = df
-            st.success(f"🎉 欄位回歸簡化！共同步 {len(df)} 筆完整行程資訊。")
+            st.success(f"🎉 同步成功！共取得 {len(df)} 筆有效行程。")
         else:
             st.error("未能成功解析網頁內文。")
             
@@ -105,18 +103,28 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
 if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
     df = st.session_state.schedule_df
     
-    tab1, tab2 = st.tabs(["🎯 明日/今日焦點", "📊 當週完整行程表"])
+    tab1, tab2 = st.tabs(["🎯 焦點行程觀測", "📊 當週完整行程表"])
     
     with tab1:
-        st.subheader("📌 快速篩選觀測")
-        search_query = st.text_input("請輸入欲查詢的日期（例如 `6月23日`）", value="6月23日")
+        st.subheader("📌 快速日期篩選")
         
-        if search_query:
-            filtered_df = df[df['all_text'].str.contains(search_query, na=False)]
+        # 💡 關鍵改動：從現有的資料庫中提取不重複的日期清單，排序後做成下拉選單
+        available_dates = sorted(list(df['日期'].unique()), reverse=True)
+        
+        if available_dates:
+            search_query = st.selectbox(
+                "請選擇欲觀測的公告日期（選單範圍依官網現存日期動態調整）：", 
+                options=available_dates,
+                index=0  # 預設選取最新的一天
+            )
+            
+            filtered_df = df[df['日期'] == search_query]
             if not filtered_df.empty:
                 st.dataframe(filtered_df.drop(columns=['all_text']), use_container_width=True)
             else:
                 st.info(f"💡 目前無「{search_query}」的公開行程。")
+        else:
+            st.warning("⚠️ 目前無任何可供選擇的日期資料。")
                 
     with tab2:
         st.subheader("📋 官網目前公告之所有行程")
