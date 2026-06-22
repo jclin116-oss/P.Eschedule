@@ -1,42 +1,46 @@
 import urllib.request
 import ssl
 import feedparser
+import streamlit as st
 
-def read_moea_rss():
-    url = "https://www.moea.gov.tw/Mns/populace/news/NewsRSSdetail.aspx?Kind=10"
+# 設定網頁標題
+st.set_page_config(page_title="經濟部經貿新聞即時看板", page_icon="📰")
+st.title("📰 經濟部經貿新聞即時看板")
+st.caption("資料來源：經濟部官網 RSS（即時更新，不透過第三方轉換）")
+
+# 建立一個重新整理按鈕
+if st.button("🔄 手動重新整理"):
+    st.rerun()
+
+url = "https://www.moea.gov.tw/Mns/populace/news/NewsRSSdetail.aspx?Kind=10"
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+
+try:
+    # 解決 SSL 憑證與阻擋問題
+    context = ssl._create_unverified_context()
+    req = urllib.request.Request(url, headers=headers)
     
-    # 坑 1 解決：偽裝成一般 Chrome 瀏覽器，避免被政府網站防火牆阻擋
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    }
+    with urllib.request.urlopen(req, context=context) as response:
+        feed = feedparser.parse(response.read())
     
-    try:
-        # 坑 2 解決：創建一個忽略 SSL 憑證驗證的 context，避免安全憑證錯誤
-        context = ssl._create_unverified_context()
-        
-        # 建立請求並獲取網頁文字內容
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=context) as response:
-            xml_data = response.read()
-        
-        # 將下載好的 XML 文字丟給 feedparser 解析
-        feed = feedparser.parse(xml_data)
-        
-        if feed.bozo:
-            print("RSS 解析失敗，格式可能有誤。")
-            return
-            
-        print(f"【訂閱來源】: {feed.channel.title}\n" + "="*50)
-        
-        # 依序印出最新消息
+    # 畫一條分隔線
+    st.divider()
+    
+    # 依序渲染新聞到 Streamlit 網頁上
+    if feed.entries:
         for entry in feed.entries:
-            print(f"發布日期: {entry.get('published', '無日期')}")
-            print(f"新聞標題: {entry.title}")
-            print(f"詳細連結: {entry.link}")
-            print("-" * 50)
+            title = entry.title
+            link = entry.link
+            pub_date = entry.get('published', '未知時間')
             
-    except Exception as e:
-        print(f"讀取失敗，錯誤原因: {e}")
+            # 使用 Streamlit 的擴充元件漂亮呈現
+            with st.container():
+                st.markdown(f"#### [{title}]({link})")
+                st.caption(f"📅 發布日期: {pub_date}")
+                st.write(f"[點此閱讀官網原文]({link})")
+                st.divider()
+    else:
+        st.info("目前沒有更新的新聞。")
 
-if __name__ == "__main__":
-    read_moea_rss()
+except Exception as e:
+    st.error(f"連線或解析失敗，錯誤原因: {e}")
