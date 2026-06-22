@@ -12,7 +12,7 @@ today = datetime.now().date()
 selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
 date_str = selected_date.strftime("%Y-%m-%d")
 
-# 建立多元日期字串格式
+# 建立多元日期字串格式，供總統府與經濟部 RSS 進行過濾
 roc_year = selected_date.year - 1911
 date_variants = [
     date_str,                                      # 2026-06-22
@@ -42,34 +42,32 @@ if st.button("🔄 立即更新並篩選行程資料", type="primary"):
         if all_data:
             df = pd.DataFrame(all_data)
             
-            # 官階排序
+            # 官階排序 (總統 -> 副總統 -> 行政院長 -> 行政副院長 -> 經濟部長)
             job_order = ["總統", "副總統", "行政院長", "行政副院長", "經濟部長"]
             df['官職'] = pd.Categorical(df['官職'], categories=job_order, ordered=True)
             df = df.sort_values(by='官職').dropna(subset=['官職'])
             
-            # 時間戳記
+            # 檢查時間戳記
             df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
             
             # 欄位順序 (保留網址欄位供 LinkColumn 讀取)
             df = df[['官職', '行程內容', '時間/地點', '檢查時間', '網址']]
             
-            st.success(f"{date_str} 資料篩選完成！")
+            st.success(f"{date_str} 資料篩選與官階排序完成！")
             st.subheader(f"📅 {date_str} 行程列表")
             
-            # --- 關鍵：配置連結顯示功能 ---
-            st.data_editor(
+            # --- 修正版：使用標準 st.dataframe 並移除不穩定的 display_text 參數 ---
+            st.dataframe(
                 df,
                 use_container_width=True,
                 hide_index=True,
-                disabled=True, # 設為唯讀表格
                 column_config={
                     "行程內容": st.column_config.LinkColumn(
                         "行程內容 (可點擊跳轉)",
                         help="點擊文字可直接開啟對應政府公開頁面",
-                        url_column="網址", # 指定超連結指向網址欄位
-                        display_text="^.*$" # 顯示原本的完整標題文字
+                        url_column="網址"  # 指定超連結指向網址欄位
                     ),
-                    "網址": None # 隱藏難看的純網址欄位，不直接露出
+                    "網址": None  # 隱藏獨立的純網址欄位
                 }
             )
             
