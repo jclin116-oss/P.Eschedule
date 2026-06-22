@@ -2,69 +2,66 @@ import streamlit as st
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime, date
 import ssl
-from datetime import datetime
 
-# 設定 SSL 忽略憑證問題
+# 忽略 SSL 錯誤
 ssl._create_default_https_context = ssl._create_unverified_context
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
-# 定義官階 (數字越小越高)
-RANK_MAP = {
-    "總統": 1,
-    "副總統": 2,
-    "行政院院長": 3,
-    "行政院副院長": 4,
-    "經濟部部長": 5,
-    "經濟部次長": 6
-}
+# 定義官階順序 (影響顯示順序，非篩選)
+RANK_ORDER = ["總統", "副總統", "行政院院長", "行政院副院長", "經濟部部長", "經濟部次長"]
 
-st.set_page_config(layout="wide", page_title="高層行程監測")
-st.title("政府高層公開行程彙整")
+st.set_page_config(layout="wide", page_title="政府高層行程監測")
+st.title("政府高層行程監測")
 
-# --- 側邊欄配置 ---
+# --- 側邊欄 ---
 st.sidebar.header("搜尋設定")
-target_date = st.sidebar.date_input("選擇日期", value=datetime.now().date())
+selected_date = st.sidebar.date_input("選擇日期", value=datetime.now().date())
 is_searching = st.sidebar.button("搜尋行程")
 
-# --- 資料爬取邏輯 ---
-@st.cache_data(ttl=3600)
-def fetch_all_schedules():
-    all_data = []
+# --- 爬蟲邏輯 ---
+def get_schedules():
+    all_rows = []
     
-    # 1. 總統府
+    # 1. 總統府 (抓取邏輯需對應最新網站結構)
     try:
+        # 這裡需放入實際能抓到資料的爬蟲邏輯，若網站結構變更，需調整
+        # 為了演示，我們使用簡單的 BeautifulSoup 抓取
         res = requests.get("https://www.president.gov.tw/Page/37", headers=HEADERS, timeout=10, verify=False)
         res.encoding = 'utf-8'
         soup = BeautifulSoup(res.text, 'html.parser')
-        for unit in soup.select(".unitList"):
-            name = unit.select_one(".unitTitle").get_text(strip=True) if unit.select_one(".unitTitle") else "總統"
-            # 簡化名稱以匹配 RANK_MAP
-            role = "總統" if "總統" in name and "副" not in name else ("副總統" if "副總統" in name else "總統")
-            for item in soup.select(".timeIB"):
-                all_data.append({"人物": role, "行程": item.get_text(strip=True), "日期": datetime.now().date()}) # 需調整日期邏輯
+        # 範例結構：請根據實際網頁的 class 名稱調整
+        for item in soup.select(".timeIB"):
+            all_rows.append({"人物": "總統", "行程": item.text.strip(), "時間": "公開行程", "日期": date.today()})
     except: pass
-
-    # 2. 行政院與經濟部 (依據網站結構抓取)
-    # 實際運作時，這裡需要針對各個網頁的 CSS Class 進行具體解析
-    # 若該日無資料，需回傳空資料
     
-    return pd.DataFrame(all_data)
+    # 這裡可以加入行政院、經濟部等其他單位的爬蟲邏輯...
+    # all_rows.append(...)
+    
+    return pd.DataFrame(all_rows)
 
 # --- 顯示邏輯 ---
 if is_searching:
-    df = fetch_all_schedules()
-    
-    if not df.empty:
-        # 加入排序權重
-        df['rank'] = df['人物'].map(RANK_MAP).fillna(99)
-        df = df.sort_values('rank')
+    with st.spinner('正在讀取資料...'):
+        df = get_schedules()
         
-        # 移除排序暫存欄位並顯示
-        display_df = df.drop(columns=['rank'])
-        st.subheader(f"{target_date} 行程總覽")
-        st.table(display_df) # 使用 table 呈現整潔格式
-    else:
-        st.warning(f"{target_date} 目前無公開行程資料。")
+        if not df.empty:
+            # 1. 轉換日期並嚴格篩選
+            df['日期'] = pd.to_datetime(df['日期']).dt.date
+            filtered_df = df[df['日期'] == selected_date].copy()
+            
+            if not filtered_df.empty:
+                # 2. 進行官階排序 (建立類別並排序)
+                filtered_df['人物'] = pd.Categorical(filtered_df['人物'], categories=RANK_ORDER, ordered=True)
+                filtered_df = filtered_df.sort_values('人物')
+                
+                # 3. 顯示表格
+                st.subheader(f"{selected_date} 行程總覽")
+                st.dataframe(filtered_df[['人物', '行程', '時間', '日期']], use_container_width=True, hide_index=True)
+            else:
+                st.warning(f"{selected_date} 無公開行程。")
+        else:
+            st.error("目前抓取不到任何資料，請檢查網路連線或網站結構是否更新。")
 else:
-    st.info("請在左側選擇日期後，按下「搜尋行程」按鈕。")
+    st.info("請選擇日期並按下「搜尋行程」按鈕。")
