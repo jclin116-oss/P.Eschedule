@@ -5,30 +5,30 @@ from datetime import datetime
 
 st.set_page_config(page_title="政府首長公開行程監測", layout="wide")
 
-st.title("🏛️ 政府首長公開行程即時看板")
+st.title("🏛️ 政府首長公開行程即時看板 (RSS 增強版)")
 
 # --- 日期選擇器 ---
 today = datetime.now().date()
 selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
 date_str = selected_date.strftime("%Y-%m-%d")
 
-# 建立多種可能的日期文字格式組合，包裝成一個清單 (List)
+# 建立多元日期字串格式，相容於 RSS 的文本過濾機制
 roc_year = selected_date.year - 1911
 date_variants = [
     date_str,                                      # 2026-06-22
     selected_date.strftime("%Y/%m/%d"),           # 2026/06/22
     f"{roc_year}年{selected_date.month}月{selected_date.day}日", # 115年6月22日
-    f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}" # 115/06/22
+    f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}", # 115/06/22
+    f"{selected_date.month}月{selected_date.day}日" # 6月22日 (相容部分純月日格式)
 ]
 
-st.caption(f"本系統將檢索官網近期行程，並自動過濾出符合 【{date_str}】 相關格式的資料。")
+st.caption(f"本系統已整合行政院 RSS 數據源。目前檢索日期：【{date_str}】。")
 
 spider = ScheduleSpider()
 
 if st.button("🔄 立即更新並篩選行程資料", type="primary"):
-    with st.spinner(f"正在檢索並篩選 {date_str} 的行程，請稍候..."):
+    with st.spinner(f"正在連線各部會數據源並篩選 {date_str} 資料..."):
         
-        # 修正：直接將清單物件傳入各個函式
         ey_data = spider.get_ey_schedule(date_variants)
         president_data = spider.get_president_schedule(date_variants)
         moea_data = spider.get_moea_schedule(date_variants)
