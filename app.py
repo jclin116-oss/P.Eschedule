@@ -32,10 +32,10 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         def save_current_entry():
             """將目前緩衝區累積的所有內文打包"""
             if current_buffer and current_leader:
-                # 清洗緩衝區，把最後一天可能會黏到的頁尾分頁雜訊直接踢掉
+                # 💡 雙重清洗：把所有可能黏在結尾的頁尾、分頁、歷史查詢雜訊彻底剔除
                 clean_lines = []
                 for b_line in current_buffer:
-                    if any(noise in b_line for noise in ["目前總共有", "筆資料", "上一頁", "下一頁", "網站安全政策", "隱私權保護宣告"]):
+                    if any(noise in b_line for noise in ["目前總共有", "筆資料", "上一頁", "下一頁", "網站安全政策", "隱私權保護宣告", "如欲查詢歷史資訊", "首長行程(歷史資料)"]):
                         continue
                     clean_lines.append(b_line)
                 
@@ -46,6 +46,10 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                 
                 # 排除頁首頁尾主選單雜訊
                 if any(noise in full_content for noise in ["首長類別", "關鍵字", "主視覺", "RSS"]):
+                    return
+                
+                # 如果被剔除到只剩下空字串，就不儲存
+                if not full_content.strip():
                     return
                 
                 data.append({
@@ -59,6 +63,13 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         LEADER_TAGS = ["部長", "次長", "所屬單位記者會"]
 
         for line in raw_lines:
+            # 💡 頁尾絕對防禦線：一看到這些歷史資訊與頁尾文字，立刻存檔並結束整個迴圈
+            if any(stop_word in line for stop_word in ["如欲查詢歷史資訊", "首長行程(歷史資料)", "目前總共有", "網站安全政策"]):
+                save_current_entry()
+                current_leader = None
+                current_buffer = []
+                break
+
             # 1. 偵測到新日期
             if '月' in line and '日' in line and len(line) < 15:
                 if not any(tag in line for tag in LEADER_TAGS):
@@ -75,14 +86,15 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                 current_buffer = []
                 continue
             
-            # 3. 貪婪累積行程內容（包含本日無公開行程也老實塞進去）
+            # 3. 貪婪累積行程內容
             if current_leader:
                 if line not in current_buffer:
                     current_buffer.append(line)
                     
-                # 💡 如果內容是「本日無公開行程」，存檔後清空，但繼續讓下一行運行，不中斷流程
+                # 💡 終極修正：如果內容是「本日無公開行程」，存檔後除了清空緩衝區，必須立刻切斷當前首長狀態！
                 if "本日無公開行程" in line:
                     save_current_entry()
+                    current_leader = None  # 確保狀態歸零，後續雜音絕對找不到首長可以黏！
                     current_buffer = []
                     
         # 結尾保底存檔
@@ -90,14 +102,11 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
 
         if data:
             df = pd.DataFrame(data)
-            
-            # 💡 關鍵改變：完全拿掉原本的「無公開行程」過濾行，讓它們老老實實列出來！
-            
             # 移除重複項
             df = df.drop_duplicates(subset=['日期', '首長類別', '行程內容'])
             
             st.session_state.schedule_df = df
-            st.success(f"🎉 全日期同步成功！共取得 {len(df)} 筆完整觀測紀錄（含無行程日）。")
+            st.success(f"🎉 究極清洗同步成功！共取得 {len(df)} 筆完美行程紀錄。")
         else:
             st.error("未能成功解析網頁內文。")
             
@@ -113,7 +122,6 @@ if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
     with tab1:
         st.subheader("📌 快速日期篩選")
         
-        # 下拉選單現在會包含所有的日期（有行程與沒行程的都有）
         available_dates = sorted(list(df['日期'].unique()), reverse=True)
         
         if available_dates:
