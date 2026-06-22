@@ -6,7 +6,7 @@ import streamlit as st
 
 st.set_page_config(page_title="經濟部首長行程自動觀測站", layout="wide")
 st.title("💼 經濟部首長行程自動觀測站")
-st.caption("完美阻斷版：徹底過濾頁尾分頁雜訊，100% 精準判斷無行程日")
+st.caption("全景觀測版：包含「無公開行程」在內的所有公告日期皆完整呈現")
 
 # 一鍵抓取按鈕
 if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.session_state:
@@ -30,12 +30,22 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         current_buffer = []
         
         def save_current_entry():
-            """將目前緩衝區累積的所有內文原封不動打包"""
+            """將目前緩衝區累積的所有內文打包"""
             if current_buffer and current_leader:
-                full_content = "\n".join(current_buffer)
+                # 清洗緩衝區，把最後一天可能會黏到的頁尾分頁雜訊直接踢掉
+                clean_lines = []
+                for b_line in current_buffer:
+                    if any(noise in b_line for noise in ["目前總共有", "筆資料", "上一頁", "下一頁", "網站安全政策", "隱私權保護宣告"]):
+                        continue
+                    clean_lines.append(b_line)
                 
-                # 排除頁首頁尾選單與分頁雜訊
-                if any(noise in full_content for noise in ["首長類別", "關鍵字", "主視覺", "RSS", "目前總共有"]):
+                if not clean_lines:
+                    return
+                    
+                full_content = "\n".join(clean_lines)
+                
+                # 排除頁首頁尾主選單雜訊
+                if any(noise in full_content for noise in ["首長類別", "關鍵字", "主視覺", "RSS"]):
                     return
                 
                 data.append({
@@ -49,12 +59,7 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         LEADER_TAGS = ["部長", "次長", "所屬單位記者會"]
 
         for line in raw_lines:
-            # 💡 絕對黑名單防禦：一旦遇到分頁或經濟部頁尾宣告，代表行程表已經結束，立刻存檔並跳出
-            if any(stop_word in line for stop_word in ["目前總共有", "筆資料", "上一頁", "下一頁", "網站安全政策", "隱私權保護宣告"]):
-                save_current_entry()
-                break
-                
-            # 1. 偵測到新日期 (長度過長則忽略，避開可能含有月日的內文)
+            # 1. 偵測到新日期
             if '月' in line and '日' in line and len(line) < 15:
                 if not any(tag in line for tag in LEADER_TAGS):
                     save_current_entry() # 換日前先存檔
@@ -70,12 +75,12 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                 current_buffer = []
                 continue
             
-            # 3. 貪婪累積行程內容
+            # 3. 貪婪累積行程內容（包含本日無公開行程也老實塞進去）
             if current_leader:
                 if line not in current_buffer:
                     current_buffer.append(line)
                     
-                # 💡 如果內容直接是「本日無公開行程」，不需要再等下一行，直接存檔並清空
+                # 💡 如果內容是「本日無公開行程」，存檔後清空，但繼續讓下一行運行，不中斷流程
                 if "本日無公開行程" in line:
                     save_current_entry()
                     current_buffer = []
@@ -86,13 +91,13 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         if data:
             df = pd.DataFrame(data)
             
-            # 💡 確實濾除所有包含「無公開行程」的列
-            df = df[~df['行程內容'].str.contains("無公開行程", na=False)].reset_index(drop=True)
+            # 💡 關鍵改變：完全拿掉原本的「無公開行程」過濾行，讓它們老老實實列出來！
+            
             # 移除重複項
             df = df.drop_duplicates(subset=['日期', '首長類別', '行程內容'])
             
             st.session_state.schedule_df = df
-            st.success(f"🎉 同步成功！共取得 {len(df)} 筆有效行程。")
+            st.success(f"🎉 全日期同步成功！共取得 {len(df)} 筆完整觀測紀錄（含無行程日）。")
         else:
             st.error("未能成功解析網頁內文。")
             
@@ -108,7 +113,7 @@ if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
     with tab1:
         st.subheader("📌 快速日期篩選")
         
-        # 提取去重並排序的日期清單
+        # 下拉選單現在會包含所有的日期（有行程與沒行程的都有）
         available_dates = sorted(list(df['日期'].unique()), reverse=True)
         
         if available_dates:
@@ -122,10 +127,10 @@ if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
             if not filtered_df.empty:
                 st.dataframe(filtered_df.drop(columns=['all_text']), use_container_width=True)
             else:
-                st.info(f"💡 目前無「{search_query}」的公開行程。")
+                st.info(f"💡 該日期無公開行程。")
         else:
-            st.warning("⚠️ 目前無任何有公開行程的日期供選擇。")
+            st.warning("⚠️ 目前無任何公告日期。")
                 
     with tab2:
-        st.subheader("📋 官網目前公告之所有行程")
+        st.subheader("📋 官網目前公告之所有行程（含無行程日）")
         st.dataframe(df.drop(columns=['all_text']), use_container_width=True)
