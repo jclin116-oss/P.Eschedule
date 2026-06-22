@@ -6,7 +6,7 @@ import streamlit as st
 
 st.set_page_config(page_title="經濟部首長行程自動觀測站", layout="wide")
 st.title("💼 經濟部首長行程自動觀測站")
-st.caption("欄位清洗完美版：徹底解決行程內容與地點欄位重疊、重複顯示的問題")
+st.caption("回歸純粹版：行程、地點與說明保持一體，絕不拆分欄位")
 
 # 一鍵抓取按鈕
 if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.session_state:
@@ -30,28 +30,10 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
         current_buffer = []
         
         def save_current_entry():
-            """將目前緩衝區累積的所有文字，精準打包拆分"""
+            """將目前緩衝區累積的所有內文原封不動打包"""
             if current_buffer and current_leader:
-                
-                # 1. 提取並清理地點：從緩衝區中找出含有「地點：」的那一行
-                location = "無" if "本日無公開行程" in current_buffer else "未標註"
-                pure_content_lines = []
-                
-                for line in current_buffer:
-                    if "地點：" in line or "地點:" in line:
-                        # 抽出地點內容
-                        loc_raw = line.replace("地點：", "").replace("地點:", "").strip()
-                        # 如果地點後面又黏著說明，切開它
-                        if "※說明" in loc_raw:
-                            location = loc_raw.split("※說明")[0].strip()
-                        else:
-                            location = loc_raw
-                    else:
-                        # 非地點行，才放入核心內容行（這樣就能防止行程內容和地點重複出現）
-                        pure_content_lines.append(line)
-                
-                # 2. 組合最終純化後的行程內容
-                full_content = "\n".join(pure_content_lines)
+                # 用換行符號連接，完全保留官網原始的段落順序
+                full_content = "\n".join(current_buffer)
                 
                 # 排除頁首頁尾選單雜訊
                 if any(noise in full_content for noise in ["首長類別", "關鍵字", "主視覺", "RSS"]):
@@ -61,26 +43,25 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                     "日期": current_date,
                     "首長類別": current_leader,
                     "行程內容": full_content,
-                    "地點": location,
-                    "all_text": f"{current_date} {current_leader} {full_content} {location}"
+                    "all_text": f"{current_date} {current_leader} {full_content}"
                 })
 
-        # 核心標籤
+        # 核心分類標籤
         LEADER_TAGS = ["部長", "次長", "所屬單位記者會"]
 
         for line in raw_lines:
             # 1. 偵測到新日期
             if '月' in line and '日' in line and len(line) < 15:
                 if not any(tag in line for tag in LEADER_TAGS):
-                    save_current_entry()
+                    save_current_entry() # 換日前先存檔
                     current_date = line.replace("2026", "").strip()
                     current_leader = None
                     current_buffer = []
                     continue
             
-            # 2. 偵測到分類標籤
+            # 2. 偵測到核心分類標籤
             if line in LEADER_TAGS:
-                save_current_entry()
+                save_current_entry() # 換分類前先存檔
                 current_leader = line
                 current_buffer = []
                 continue
@@ -92,27 +73,30 @@ if st.button("🔄 一鍵同步最新行程資料") or 'schedule_df' not in st.s
                 current_buffer = []
                 continue
             
-            # 4. 累積行程內容
+            # 4. 貪婪累積：只要確認過分類，後續每一行字通通順序塞進去，不對地點做任何特殊過濾！
             if current_leader:
                 if line not in current_buffer:
                     current_buffer.append(line)
                     
+                # 防禦機制：如果是「本日無公開行程」，立刻單獨打包
                 if "本日無公開行程" in line:
                     save_current_entry()
                     current_buffer = []
                     
-        # 結尾保底
+        # 結尾保底存檔
         save_current_entry()
 
         if data:
             df = pd.DataFrame(data)
+            # 濾除無公開行程的閒置列
             df = df[~df['行程內容'].str.contains("無公開行程", na=False)].reset_index(drop=True)
+            # 移除重複項
             df = df.drop_duplicates(subset=['日期', '首長類別', '行程內容'])
             
             st.session_state.schedule_df = df
-            st.success(f"🎉 欄位校正成功！共同步 {len(df)} 筆完美分流行程。")
+            st.success(f"🎉 欄位回歸簡化！共同步 {len(df)} 筆完整行程資訊。")
         else:
-            st.error("未能成功分析網頁內文。")
+            st.error("未能成功解析網頁內文。")
             
     except Exception as e:
         st.error(f"抓取失敗: {e}")
