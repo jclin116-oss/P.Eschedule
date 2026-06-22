@@ -29,9 +29,7 @@ class ScheduleSpider:
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})，可能遭 IP 封鎖", "時間/地點": "-"}]
 
-            # 修正：強制指定 UTF-8 編碼
             res.encoding = 'utf-8'
-            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
@@ -60,27 +58,29 @@ class ScheduleSpider:
             return [{"官職": target_name, "行程內容": f"連線異常: {str(e)}", "時間/地點": "-"}]
 
     def get_president_schedule(self):
-        """抓取總統府行程"""
-        url = "https://www.president.gov.tw/Page/94"
+        """抓取總統府行程（已修正為最新新聞稿網址）"""
+        # 修正：更新為總統府動態新聞稿網址
+        url = "https://www.president.gov.tw/News"
         target_name = "總統"
         try:
             res = requests.get(url, headers=self.headers, timeout=12, verify=False)
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
                 
-            # 修正：強制指定 UTF-8 編碼，解決總統府資料亂碼問題
             res.encoding = 'utf-8'
-            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
-            items = soup.select('.news_list li') or soup.select('tr')
+            # 針對總統府新聞列表標題進行解析
+            items = soup.select('.p-list-item') or soup.select('.news_list li') or soup.select('tr')
             for item in items:
                 text = item.get_text(separator=" ").strip()
-                if text:
+                # 過濾掉無意義的空白行，並清理換行符號
+                if text and len(text) > 5:
+                    clean_text = " ".join(text.split())
                     schedules.append({
                         "官職": target_name,
-                        "行程內容": text.replace("\n", " "),
+                        "行程內容": clean_text,
                         "時間/地點": "詳見官網新聞"
                     })
             
@@ -99,9 +99,7 @@ class ScheduleSpider:
             if res.status_code != 200:
                 return [{"官職": target_name, "行程內容": f"站點回應錯誤 (HTTP {res.status_code})", "時間/地點": "-"}]
                 
-            # 修正：強制指定 UTF-8 編碼
             res.encoding = 'utf-8'
-            
             soup = BeautifulSoup(res.text, 'html.parser')
             schedules = []
             
