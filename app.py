@@ -3,50 +3,50 @@ import pandas as pd
 from spiders import ScheduleSpider
 from datetime import datetime
 
-# 網頁基本設定
 st.set_page_config(page_title="政府首長公開行程監測", layout="wide")
 
 st.title("🏛️ 政府首長公開行程即時看板")
-st.caption(f"本系統自動爬取總統府、行政院、經濟部之公開行程資訊。目前查詢時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-# 初始化爬蟲模組
+# --- 新增功能：日期選擇器 ---
+today = datetime.now().date()
+selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
+date_str = selected_date.strftime("%Y-%m-%d")
+# 中文格式用於部分網頁關鍵字比對 (例如 115/06/22 或 115年6月22日)
+roc_year = selected_date.year - 1911
+date_zh_variant1 = f"{roc_year}年{selected_date.month}月{selected_date.day}日"
+date_zh_variant2 = f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}"
+
+st.caption(f"本系統將檢索官網近期行程，並自動過濾出符合 【{date_str}】 或 【{date_zh_variant1}】 的資料。")
+
 spider = ScheduleSpider()
 
-# 介面按鈕：觸發即時爬取
-if st.button("🔄 立即更新所有行程資料", type="primary"):
-    with st.spinner("正在安全連線並爬取各部會最新行程，請稍候..."):
+if st.button("🔄 立即更新並篩選行程資料", type="primary"):
+    with st.spinner(f"正在檢索並篩選 {date_str} 的行程，請稍候..."):
         
-        # 執行各部會爬蟲
-        premier_data = spider.get_ey_schedule("premier")
-        vice_data = spider.get_ey_schedule("vice")
-        president_data = spider.get_president_schedule()
-        moea_data = spider.get_moea_schedule()
+        # 執行爬蟲，將日期變體傳入過濾
+        ey_data = spider.get_ey_schedule(date_str, date_zh_variant1, date_zh_variant2)
+        president_data = spider.get_president_schedule(date_str, date_zh_variant1, date_zh_variant2)
+        moea_data = spider.get_moea_schedule(date_str, date_zh_variant1, date_zh_variant2)
         
-        # 合併所有蒐集到的資料
-        all_data = president_data + premier_data + vice_data + moea_data
+        all_data = president_data + ey_data + moea_data
         
         if all_data:
             df = pd.DataFrame(all_data)
-            
-            # 清理 DataFrame 欄位順序與呈現
             df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
             df = df[['官職', '時間/地點', '行程內容', '檢查時間']]
             
-            st.success("所有資料更新成功！")
-            
-            # 顯示資料表格
-            st.subheader("今日行程列表")
+            st.success(f"{date_str} 資料篩選完成！")
+            st.subheader(f"📅 {date_str} 行程列表")
             st.dataframe(df, use_container_width=True, hide_index=True)
             
-            # 提供下載 CSV 功能
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
-                label="📥 下載行程報表 (CSV)",
+                label="📥 下載此日期行程報表 (CSV)",
                 data=csv,
-                file_name=f"gov_schedule_{datetime.now().strftime('%Y%m%d')}.csv",
+                file_name=f"gov_schedule_{date_str}.csv",
                 mime="text/csv",
             )
         else:
-            st.warning("未能成功獲取任何首長資料。")
+            st.warning(f"未能成功獲取任何首長資料。")
 else:
-    st.info("請點擊上方按鈕開始抓取今日行程。")
+    st.info("請選擇日期並點擊上方按鈕開始查詢。")
