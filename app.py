@@ -1,60 +1,37 @@
 import streamlit as st
-import pandas as pd
-from spiders import ScheduleSpider
-from datetime import datetime
+import spiders
 
-st.set_page_config(page_title="政府首長公開行程監測", layout="wide")
+st.set_page_config(page_title="政府政要行程儀表板", layout="wide")
+st.title("政府政要行程與公告監測")
 
-st.title("🏛️ 政府首長公開行程即時看板")
+# 快取設定：避免頻繁存取造成被封鎖
+@st.cache_data(ttl=3600)
+def load_moea():
+    return spiders.fetch_rss_data("https://www.moea.gov.tw/Mns/populace/news/NewsRSSdetail.aspx?Kind=10")
 
-# --- 日期選擇器 ---
-today = datetime.now().date()
-selected_date = st.date_input("請選擇欲查詢的行程日期：", today)
-date_str = selected_date.strftime("%Y-%m-%d")
+@st.cache_data(ttl=3600)
+def load_ey():
+    return spiders.fetch_rss_data("https://www.ey.gov.tw/RSS_Content2.aspx?PID=c98e07e2-66b4-4c90-a68d-2ef8ef8cf550")
 
-# 建立多元日期字串格式，供總統府與經濟部 RSS 進行過濾
-roc_year = selected_date.year - 1911
-date_variants = [
-    date_str,                                      # 2026-06-22
-    selected_date.strftime("%Y/%m/%d"),           # 2026/06/22
-    f"{roc_year}年{selected_date.month}月{selected_date.day}日", # 115年6月22日
-    f"{roc_year}年度{selected_date.month}月{selected_date.day}日", # 115年度6月22日
-    f"{roc_year}/{selected_date.month:02d}/{selected_date.day:02d}", # 115/06/22
-    f"{roc_year}/{selected_date.month}/{selected_date.day}", # 115/6/22
-    f"{selected_date.month}/{selected_date.day}", # 6/22
-    f"{selected_date.month}月{selected_date.day}日" # 6月22日
-]
+@st.cache_data(ttl=3600)
+def load_president():
+    return spiders.get_president_schedule()
 
-st.caption(f"目前檢索日期：【{date_str}】。行政院與經濟部已切換為 RSS 數據源。")
+# 介面佈局
+tab1, tab2, tab3 = st.tabs(["經濟部", "行政院", "總統府"])
 
-spider = ScheduleSpider()
+with tab1:
+    st.subheader("經濟部最新公告")
+    st.dataframe(load_moea(), use_container_width=True)
 
-if st.button("🔄 立即更新並篩選行程資料", type="primary"):
-    with st.spinner(f"正在連線各部會數據源並篩選 {date_str} 資料..."):
-        
-        ey_data = spider.get_ey_schedule(date_str)
-        president_data = spider.get_president_schedule(date_variants)
-        moea_data = spider.get_moea_schedule(date_variants)
-        
-        all_data = president_data + ey_data + moea_data
-        
-        if all_data:
-            df = pd.DataFrame(all_data)
-            df['檢查時間'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-            df = df[['官職', '時間/地點', '行程內容', '檢查時間']]
-            
-            st.success(f"{date_str} 資料篩選完成！")
-            st.subheader(f"📅 {date_str} 行程列表")
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            csv = df.to_csv(index=False).encode('utf-8-sig')
-            st.download_button(
-                label="📥 下載此日期行程報表 (CSV)",
-                data=csv,
-                file_name=f"gov_schedule_{date_str}.csv",
-                mime="text/csv",
-            )
-        else:
-            st.warning(f"未能成功獲取任何首長資料。")
-else:
-    st.info("請選擇日期並點擊上方按鈕開始查詢。")
+with tab2:
+    st.subheader("行政院最新公告")
+    st.dataframe(load_ey(), use_container_width=True)
+
+with tab3:
+    st.subheader("總統/副總統行程")
+    df_po = load_president()
+    if not df_po.empty:
+        st.table(df_po)
+    else:
+        st.info("目前無公開行程。")
