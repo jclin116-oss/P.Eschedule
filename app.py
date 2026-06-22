@@ -13,7 +13,11 @@ st.caption("直接同步官網 HTML 行程表，一鍵轉為結構化資料")
 if st.button("🔄 一鍵抓取最新行程（並整理成表格）") or 'schedule_df' not in st.session_state:
     
     url = "https://www.moea.gov.tw/Mns/populace/news/MinisterSchedule.aspx?menu_id=42225"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
     
     try:
         context = ssl._create_unverified_context()
@@ -23,47 +27,49 @@ if st.button("🔄 一鍵抓取最新行程（並整理成表格）") or 'schedu
             html = response.read()
             
         soup = BeautifulSoup(html, 'html.parser')
-        table = soup.find('table')
         
-        if table:
-            data = []
-            rows = table.find_all('tr')
+        # --- 核心邏輯升級：精準鎖定經濟部的主要內文區塊 ---
+        # 經濟部官網的主要內容區塊通常在 class 包含 "content" 或 id 為 "news_box" 的地方
+        # 我們直接找出網頁中「所有」的 tr，再過濾出真正有 4 個欄位以上的行程資料
+        all_rows = soup.find_all('tr')
+        
+        data = []
+        for row in all_rows:
+            cols = [td.text.strip().replace('\n', ' ').replace('\r', '') for td in row.find_all('td')]
             
-            for row in rows[1:]:
-                # 抓取該行所有的欄位文字
-                cols = [td.text.strip().replace('\n', ' ').replace('\r', '') for td in row.find_all('td')]
-                if cols:
-                    # 動態適應欄位數量，避免欄位名稱對不上的 KeyError Bug
-                    row_data = {}
-                    for idx, text in enumerate(cols):
-                        row_data[f"欄位_{idx+1}"] = text
-                    
-                    # 同時把整行文字合併成一個隱藏的搜尋欄位，方便後續模糊比對
-                    row_data["all_text"] = " ".join(cols)
-                    data.append(row_data)
-            
+            # 只有當欄位數量大於等於 3 或 4，且不是表頭時，才判定為行程資料
+            if len(cols) >= 3 and "首長" not in cols[0] and "行程" not in cols[0]:
+                row_data = {}
+                for idx, text in enumerate(cols):
+                    row_data[f"欄位_{idx+1}"] = text
+                
+                row_data["all_text"] = " ".join(cols)
+                data.append(row_data)
+        
+        if data:
             df = pd.DataFrame(data)
             
-            # 嘗試重新把前幾個欄位命名為好讀的中文（如果欄位數夠的話）
-            if not df.empty and len(df.columns) >= 4:
-                rename_dict = {
-                    "欄位_1": "時間/日期",
-                    "欄位_2": "首長",
-                    "欄位_3": "行程內容",
-                    "欄位_4": "地點"
-                }
-                df.rename(columns=rename_dict, inplace=True)
-                
+            # 動態重新命名欄位
+            rename_dict = {
+                "欄位_1": "時間/日期",
+                "欄位_2": "首長",
+                "欄位_3": "行程內容",
+                "欄位_4": "地點"
+            }
+            df.rename(columns=rename_dict, inplace=True)
             st.session_state.schedule_df = df
-            st.success("🎉 資料抓取且整理成功！")
+            st.success(f"🎉 資料抓取且整理成功！共抓到 {len(df)} 筆行程。")
         else:
-            st.error("未能找到行程表格，請檢查官網是否改版。")
+            # 如果還是空的，列印出網頁部分的文字以利除錯
+            st.error("未能解析到行程資料。")
+            with st.expander("查看網頁原始文字摘要（偵錯用）"):
+                st.text(soup.text[:1000])
             
     except Exception as e:
         st.error(f"抓取失敗，原因: {e}")
 
 # 2. 呈現與整理資料
-if 'schedule_df' in st.session_state:
+if 'schedule_df' in st.session_state and not st.session_state.schedule_df.empty:
     df = st.session_state.schedule_df
     
     tab1, tab2 = st.tabs(["🎯 明日/今日焦點", "📊 當週完整行程表"])
@@ -71,31 +77,30 @@ if 'schedule_df' in st.session_state:
     with tab1:
         st.subheader("📌 快速篩選觀測")
         
-        # 自動產生明天的日期字串 (06/23) 填入預設值
-        tomorrow_str = (datetime.now() + timedelta(days=1)).strftime("%m/%d")
+        # 配合網站顯示格式，自動生成今天的「6月23日」或「6/23」格式
+        now = datetime.now() + timedelta(days=1)
+        tomorrow_str_1 = now.strftime("%m/%d")         # 06/23
+        tomorrow_str_2 = f"{now.month}月{now.day}日"    # 6月23日
         
         search_query = st.text_input(
-            "請輸入欲查詢的日期關鍵字（例如輸入 `06/23` 查看明日，或輸入 `部長`）", 
-            value=tomorrow_str
+            "請輸入欲查詢的日期關鍵字（支援 6月23日 或 06/23 格式）", 
+            value=tomorrow_str_2
         )
         
         if search_query:
-            # 核心修正：直接從萬能的 "all_text" 欄位做模糊搜尋，絕對不會跳出 KeyError
             if "all_text" in df.columns:
                 filtered_df = df[df['all_text'].str.contains(search_query, na=False)]
                 
                 if not filtered_df.empty:
-                    # 顯示給使用者看時，把拿來搜尋用的隱藏欄位 "all_text" 濾掉，畫面才乾淨
                     display_df = filtered_df.drop(columns=['all_text'], errors='ignore')
                     st.dataframe(display_df, use_container_width=True)
                 else:
-                    st.info(f"查無關鍵字「{search_query}」相關的行程。")
+                    st.info(f"查無關鍵字「{search_query}」相關的行程。官網可能尚未排定或更新。")
             else:
                 st.dataframe(df, use_container_width=True)
                 
     with tab2:
         st.subheader("📋 官網目前公告之所有行程")
-        # 顯示完整表格，同樣濾掉隱藏的搜尋欄位
         final_all_df = df.drop(columns=['all_text'], errors='ignore')
         st.dataframe(final_all_df, use_container_width=True)
         
