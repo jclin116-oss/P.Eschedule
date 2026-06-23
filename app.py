@@ -1,26 +1,9 @@
-import streamlit as st
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-import urllib3
-
-# 關閉 SSL 憑證警告資訊
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# 設定網頁標題與佈局
-st.set_page_config(page_title="行政院文本撈取工具", layout="wide")
-st.title("🏛️ 行政院 - 網頁原始純文字撈取")
-
-# 側邊欄配置
-st.sidebar.header("設定抓取日期")
-target_date = st.sidebar.date_input("選擇日期", datetime.today())
-
 def get_raw_text(scraped_date):
     """
-    完全不設定 class 限制，直接撈取整個 body 的純文字（已修正 utf-8 編碼）
+    行政院行程專用精準版：
+    同時抓取 data-name 屬性（如：院長、副院長）與行程內文
     """
     date_str = scraped_date.strftime("%Y-%m-%d")
-    # 修改為行政院全部行程的網址，並套用正確的日期參數名稱 (SDate, EDate)
     base_url = f"https://www.ey.gov.tw/Page/ECE410333003326E?SDate={date_str}&EDate={date_str}"
     
     headers = {
@@ -31,31 +14,36 @@ def get_raw_text(scraped_date):
     try:
         res = requests.get(base_url, headers=headers, timeout=15, verify=False)
         if res.status_code == 200:
-            res.encoding = 'utf-8'  # 強制指定編碼，解決亂碼問題
+            res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # 直接抓取整個 body 區塊
-            body = soup.find("body")
-            if body:
-                return body.get_text(separator="\n", strip=True)
-            else:
-                return "成功連線，但網頁中找不到 <body> 標籤。"
+            # 1. 尋找網頁中所有的行程區塊 (如您圖中所示的 class="timeline-content")
+            timeline_blocks = soup.find_all(class_="timeline-content")
+            
+            if not timeline_blocks:
+                return f"📅 {date_str} 當天似乎沒有安排公開行程，或格式已變更。"
+                
+            formatted_outputs = []
+            
+            for block in timeline_blocks:
+                # 2. 找出該區塊內藏有職稱的 li 標籤 (帶有 data-name 屬性)
+                title_tag = block.find(attrs={"data-name": True})
+                job_title = ""
+                if title_tag:
+                    # 成功抓到 data-name="院長" 裡面的值！
+                    job_title = f"【{title_tag['data-name']}】\n"
+                
+                # 3. 取得該區塊的其他行程純文字內容
+                content_text = block.get_text(separator="\n", strip=True)
+                
+                # 4. 組合職稱與內文
+                full_item_text = f"{job_title}{content_text}"
+                formatted_outputs.append(full_item_text)
+                
+            # 將所有行程用分隔線連起來輸出
+            return "\n\n==============================\n\n".join(formatted_outputs)
+            
         else:
             return f"連線失敗，伺服器回應狀態碼: {res.status_code}"
     except Exception as e:
         return f"執行過程中發生連線錯誤: {str(e)}"
-
-# 點擊執行按鈕
-if st.sidebar.button("擷取原始文本"):
-    with st.spinner(f"正在下載 {target_date} 的行政院網頁資料..."):
-        
-        raw_output = get_raw_text(target_date)
-        st.subheader(f"📅 {target_date} 行政院官網原始文字內容：")
-        
-        st.text_area(
-            label="以下為爬蟲抓到的 Raw Text", 
-            value=raw_output, 
-            height=600
-        )
-else:
-    st.info("請於左側選擇日期後，點擊「擷取原始文本」按鈕。")
