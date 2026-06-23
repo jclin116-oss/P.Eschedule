@@ -9,11 +9,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 設定網頁標題與佈局
 st.set_page_config(page_title="行政院政要行程撈取工具", layout="wide")
-st.title("🏛️ 行政院 - 院長/副院長/秘書長行程原始純文字撈取")
+st.title("🏛️ 行政院 - 院長/副院長/秘書長當日行程看板")
 
-# 側邊欄配置
-st.sidebar.header("設定抓取日期")
-target_date = st.sidebar.date_input("選擇日期", datetime.today())
+# 側邊欄配置：日期篩選器
+st.sidebar.header("📅 日期篩選")
+target_date = st.sidebar.date_input("選擇抓取日期", datetime.today())
 
 def get_politician_text(url, title, date_str):
     """
@@ -32,7 +32,7 @@ def get_politician_text(url, title, date_str):
             res.encoding = 'utf-8'
             soup = BeautifulSoup(res.text, "html.parser")
             
-            # 1. 改為抓取同時包含日期與內容的完整外殼區塊
+            # 抓取包含日期與內容的完整外殼區塊
             outer_blocks = soup.find_all(class_="timeline_block")
             
             if not outer_blocks:
@@ -40,14 +40,13 @@ def get_politician_text(url, title, date_str):
                 
             blocks_text = []
             for block in outer_blocks:
-                # 2. 提取日期文字 (從 class="timeline-date" 或 "newsDate" 內提取)
+                # 提取日期文字
                 date_tag = block.find(class_=["timeline-date", "newsDate"])
                 date_prefix = ""
                 if date_tag:
-                    # 將 u 和 i 標籤內的文字（例如：6月、23日、115年、週二）串接起來，並用空格隔開
                     date_prefix = f"【{date_tag.get_text(separator=' ', strip=True)}】\n"
                 
-                # 3. 提取行程內容文字
+                # 提取行程內容文字
                 content_tag = block.find(class_="timeline-content")
                 if content_tag:
                     content_text = content_tag.get_text(separator="\n", strip=True)
@@ -61,7 +60,7 @@ def get_politician_text(url, title, date_str):
         return [f"【{title}】連線發生錯誤: {str(e)}"]
 
 # 點擊執行按鈕
-if st.sidebar.button("擷取原始文本"):
+if st.sidebar.button("擷取當日行程"):
     date_str = target_date.strftime("%Y-%m-%d")
     
     # 三位政要的獨立網址來源
@@ -71,25 +70,32 @@ if st.sidebar.button("擷取原始文本"):
         "秘書長": "https://www.ey.gov.tw/Page/98C9B1D4B4F70B85"
     }
     
-    all_outputs = []
+    final_output_sections = []
     
-    with st.spinner(f"正在平行下載 {date_str} 各政要行程資料..."):
+    with st.spinner(f"正在查詢 {date_str} 各政要行程..."):
+        # 逐一檢查各政要行程
         for title, base_url in urls.items():
             result_list = get_politician_text(base_url, title, date_str)
+            
+            # 如果該政要當天有行程，就把行程串接起來
             if result_list:
-                all_outputs.extend(result_list)
+                section_text = "\n\n------------------------------\n\n".join(result_list)
+            # 如果該政要當天無行程，則強制輸出「今日無行程」
+            else:
+                section_text = f"【{title}】\n📅 {date_str}\n❌ 今日無公開行程。"
+                
+            final_output_sections.append(section_text)
         
-        st.subheader(f"📅 {date_str} 行政院政要官網原始文字內容：")
+        # 呈現結果
+        st.subheader(f"📋 篩選日期：{date_str} 行程結果")
         
-        if all_outputs:
-            final_raw_text = "\n\n==============================\n\n".join(all_outputs)
-        else:
-            final_raw_text = f"📅 {date_str} 當天此三位政要公佈的行程似乎皆無資料。"
+        # 將三位政要的區塊用明顯的大分隔線連起來
+        final_raw_text = "\n\n============================================================\n\n".join(final_output_sections)
             
         st.text_area(
-            label="以下為爬蟲抓到的 Raw Text", 
+            label="Raw Text 輸出結果", 
             value=final_raw_text, 
-            height=600
+            height=650
         )
 else:
-    st.info("請於左側選擇日期後，點擊「擷取原始文本」按鈕。")
+    st.info("請於左側月曆選擇日期後，點擊「擷取當日行程」按鈕。")
